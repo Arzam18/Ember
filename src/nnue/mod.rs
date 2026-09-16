@@ -930,7 +930,28 @@ mod tests {
     use crate::Engine;
 
     // Archived V1 network; the embedded src/net.nnue is now an Ember V2 container.
-    const COMPACT_NET: &[u8] = include_bytes!("../../networks/V1/1.1.1-1.3.0/net.compact.nnue");
+    // Archived networks ship in the GitHub v1.1/v2.2 releases (restore with
+    // tools/fetch_networks.py); the test skips when the local copy is absent.
+    const COMPACT_NET_PATH: &str = "networks/V1/1.1.1-1.3.0/net.compact.nnue";
+
+    fn archived_compact_net() -> Option<Vec<u8>> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(COMPACT_NET_PATH);
+        match std::fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!(
+                    "skipping: {} is absent; archived networks live in GitHub releases \
+                     v1.1 and v2.2, restore them with tools/fetch_networks.py",
+                    COMPACT_NET_PATH
+                );
+                None
+            }
+            Err(error) => panic!(
+                "failed to read archived network {}: {error}",
+                path.display()
+            ),
+        }
+    }
 
     fn parse_uci_move(mv: &str) -> (usize, usize, usize, usize, u8) {
         let bytes = mv.as_bytes();
@@ -1064,7 +1085,10 @@ mod tests {
 
     #[test]
     fn fused_parent_updates_and_refreshes_match_reference_paths() {
-        let net = NNUENet::load_compact_from_bytes(COMPACT_NET, "<move motifs>")
+        let Some(compact_bytes) = archived_compact_net() else {
+            return;
+        };
+        let net = NNUENet::load_compact_from_bytes(&compact_bytes, "<move motifs>")
             .expect("compact NNUE should load");
 
         assert_fused_line_matches_reference(

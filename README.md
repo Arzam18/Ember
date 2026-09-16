@@ -188,6 +188,16 @@ the following NNUE architectures:
   `HalfKP(Friend)` feature and `AffineTransform` + `ClippedReLU` layers. Shown as
   `Loaded legacy HalfKP net <path>`.
 
+### Archived networks
+
+The repository does not track the archived Ember V1 and V2 networks used by tests and
+benchmarks. They are attached to the dedicated network releases
+[`v1.1`](https://github.com/ExxDreamerCode/Ember/releases/tag/v1.1) (Ember V1) and
+[`v2.2`](https://github.com/ExxDreamerCode/Ember/releases/tag/v2.2) (Ember V2);
+Run `python tools/fetch_networks.py` to restore the `networks/` layout locally. Tests and
+benchmarks that need these files check for them at run time and skip with a message when
+the local copy is absent, so a fresh checkout without networks still builds and passes.
+
 ## ⚙️ Configuration
 
 Engine parameters are changed through the UCI `setoption` command:

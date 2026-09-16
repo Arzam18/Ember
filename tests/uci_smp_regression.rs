@@ -181,8 +181,18 @@ fn malformed_uci_input_is_rejected_without_crashing() {
 
 #[test]
 fn external_compact_nnue_loads_through_the_uci_option() {
+    // The archived network ships with the GitHub v1.1 network release (restore
+    // with tools/fetch_networks.py); skip instead of failing when it is absent.
     let compact_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("networks/V1/1.1.1-1.3.0/net.compact.nnue");
+    if !compact_path.exists() {
+        eprintln!(
+            "skipping: {} is absent; archived networks live in GitHub releases \
+             v1.1 and v2.2, restore them with tools/fetch_networks.py",
+            compact_path.display()
+        );
+        return;
+    }
     let (mut child, rx) = spawn_ember();
     let mut stdin = child.stdin.take().expect("capture Ember stdin");
 

@@ -7,8 +7,10 @@ use std::hint::black_box;
 use std::time::Instant;
 
 // Archived V1 dense network; src/net.nnue is now an Ember V2 container that the
-// native NNUENet loader rejects, so the microbench targets the V1 net under networks/V1.
-const NET: &[u8] = include_bytes!("../../networks/V1/1.1.0-1.3.0/net.nnue");
+// native NNUENet loader rejects, so the microbench targets the V1 net. Archived
+// networks are no longer tracked in the repository: they ship with the GitHub
+// v1.1/v2.2 network releases and are restored with tools/fetch_networks.py.
+const NET_PATH: &str = "networks/V1/1.1.0-1.3.0/net.nnue";
 
 const FENS: &[&str] = &[
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -101,11 +103,26 @@ fn bench_incremental(
     (checksum, updates)
 }
 
+fn load_net() -> NNUENet {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(NET_PATH);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!(
+                "archived V1 network {} is unavailable ({error}); it ships with the \
+                 GitHub v1.1 network release, restore it with tools/fetch_networks.py",
+                path.display()
+            );
+            std::process::exit(1);
+        }
+    };
+    NNUENet::load_from_bytes(&bytes, "<microbench>").expect("archived V1 dense NNUE should load")
+}
+
 fn main() {
     let refresh_loops = parse_arg("--refresh-loops", 2000);
     let update_loops = parse_arg("--update-loops", 200);
-    let net =
-        NNUENet::load_from_bytes(NET, "<microbench>").expect("archived V1 dense NNUE should load");
+    let net = load_net();
     let states = states();
 
     let refresh_calls = refresh_loops * states.len();

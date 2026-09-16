@@ -572,9 +572,18 @@ mod tests {
         *CLASSIC_NNET.write().unwrap() = Some(Arc::new(classic));
 
         // The embedded src/net.nnue is now an Ember V2 container, so the native
-        // (dense V1) slot is exercised with the archived V1 network under networks/V1.
+        // (dense V1) slot is exercised with the archived V1 network (GitHub
+        // release v1.1, restored by tools/fetch_networks.py).
         let native_path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("networks/V1/1.1.0-1.3.0/net.nnue");
+        if !native_path.exists() {
+            eprintln!(
+                "skipping: {} is absent; archived networks live in GitHub releases \
+                 v1.1 and v2.2, restore them with tools/fetch_networks.py",
+                native_path.display()
+            );
+            return;
+        }
         init_nnue(native_path.to_str().unwrap()).unwrap();
 
         assert!(current_classic_net().is_none());

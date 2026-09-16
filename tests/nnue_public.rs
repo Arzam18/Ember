@@ -5,11 +5,32 @@ use ember_chess::backend::{
 use ember_chess::nnue::{threat_feature_count, NNUEAccumulator, NNUENet, NNUEThreatAccumulator};
 use ember_chess::types::{BLACK, WHITE};
 use ember_chess::Engine;
+use std::path::Path;
 
-// Archived V1 networks live under networks/V1; the embedded src/net.nnue is now an
-// Ember V2 container and can no longer be loaded as a native dense V1 network.
-const DENSE_NET: &[u8] = include_bytes!("../networks/V1/1.1.0-1.3.0/net.nnue");
-const COMPACT_NET: &[u8] = include_bytes!("../networks/V1/1.1.1-1.3.0/net.compact.nnue");
+// Archived V1 networks are no longer tracked in the repository. They ship with the
+// dedicated GitHub network releases (v1.1 and v2.2) and are restored locally with
+// tools/fetch_networks.py; tests that need them skip when the local copy is absent
+// so a fresh checkout without networks still builds and passes.
+const DENSE_NET_PATH: &str = "networks/V1/1.1.0-1.3.0/net.nnue";
+const COMPACT_NET_PATH: &str = "networks/V1/1.1.1-1.3.0/net.compact.nnue";
+
+fn archived_v1_net(relpath: &str) -> Option<Vec<u8>> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(relpath);
+    match std::fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "skipping: {relpath} is absent; archived networks live in GitHub releases \
+                 v1.1 and v2.2, restore them with tools/fetch_networks.py"
+            );
+            None
+        }
+        Err(error) => panic!(
+            "failed to read archived network {}: {error}",
+            path.display()
+        ),
+    }
+}
 
 fn parse_uci_move(mv: &str) -> (usize, usize, usize, usize, u8) {
     let bytes = mv.as_bytes();
@@ -239,13 +260,19 @@ fn threat_accumulator_uses_board_pawn_attack_direction() {
 
 #[test]
 fn archived_v1_compact_nnue_matches_dense_scores() {
+    let Some(dense_bytes) = archived_v1_net(DENSE_NET_PATH) else {
+        return;
+    };
+    let Some(compact_bytes) = archived_v1_net(COMPACT_NET_PATH) else {
+        return;
+    };
     let dense =
-        NNUENet::load_from_bytes(DENSE_NET, "<dense test>").expect("dense NNUE should load");
-    let compact = NNUENet::load_from_bytes(COMPACT_NET, "<compact test>")
+        NNUENet::load_from_bytes(&dense_bytes, "<dense test>").expect("dense NNUE should load");
+    let compact = NNUENet::load_from_bytes(&compact_bytes, "<compact test>")
         .expect("general NNUE loader should detect the compact format");
 
     assert!(
-        COMPACT_NET.len() + 3_000_000 < DENSE_NET.len(),
+        compact_bytes.len() + 3_000_000 < dense_bytes.len(),
         "compact embedded NNUE should remove the zero feature rows"
     );
     assert_eq!(dense.input_row_map, compact.input_row_map);
@@ -312,7 +339,10 @@ fn portable_simd_nnue_backends_available_when_vector_instructions_exist() {
 
 #[test]
 fn critical_game_lines_keep_nnue_incremental_state_exact() {
-    let net = NNUENet::load_compact_from_bytes(COMPACT_NET, "<critical PV>")
+    let Some(compact_bytes) = archived_v1_net(COMPACT_NET_PATH) else {
+        return;
+    };
+    let net = NNUENet::load_compact_from_bytes(&compact_bytes, "<critical PV>")
         .expect("compact NNUE should load");
 
     assert_incremental_line_matches_refresh(

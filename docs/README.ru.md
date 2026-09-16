@@ -202,6 +202,17 @@ info string Loaded NNUE v6 my-net.nnue SCReLU (FT=1024 L1=0 L2=0)
   `HalfKP(Friend)` и слоями `AffineTransform` + `ClippedReLU`. Выводится как
   `Loaded legacy HalfKP net <путь>`.
 
+### Архивные сети
+
+Репозиторий не хранит архивные сети Ember V1 и V2, которые используют тесты и
+бенчмарки. Они приложены к отдельным сетевым релизам
+[`v1.1`](https://github.com/ExxDreamerCode/Ember/releases/tag/v1.1) (Ember V1) и
+[`v2.2`](https://github.com/ExxDreamerCode/Ember/releases/tag/v2.2) (Ember V2);
+Выполните `python tools/fetch_networks.py`, чтобы восстановить раскладку `networks/` локально.
+Тесты и бенчмарки, которым нужны эти файлы, проверяют их наличие во время выполнения
+и пропускаются с сообщением, если локальной копии нет, поэтому свежая копия репозитория
+без сетей собирается и проходит проверки.
+
 ## ⚙️ Настройка
 
 Изменение параметров движка через UCI-команду `setoption`:
