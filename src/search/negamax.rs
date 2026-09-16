@@ -176,7 +176,12 @@ macro_rules! negamax_mode_body {
         let h = $st.hash;
 
         let ks = $st.king_sq($st.w);
-        let in_check = crate::board::is_attacked(&$st.bb, ks, !$st.w);
+        let in_check = perf_time!(
+            incheck_cycles,
+            incheck_calls,
+            $this,
+            crate::board::is_attacked(&$st.bb, ks, !$st.w)
+        );
         if let Some(score) = $this.draw_score($st, $ply, 1, in_check) {
             return score;
         }
@@ -187,7 +192,12 @@ macro_rules! negamax_mode_body {
             }
         }
 
-        let tt_data = $this.shared_tt.get_entry(h);
+        let tt_data = perf_time!(
+            ttget_cycles,
+            ttget_calls,
+            $this,
+            $this.shared_tt.get_entry(h)
+        );
         let tt_move = if excluded_move.is_none() {
             tt_data.and_then(|entry| entry.best_move)
         } else {
@@ -389,15 +399,25 @@ macro_rules! negamax_mode_body {
         let mut moves_buf = Self::take_buf(&mut $this.move_bufs, $ply);
         let pseudo_moves = !in_check;
         if pseudo_moves {
-            generate_pseudo_moves_into_mode::<CHESS960>(
-                $st,
-                $st.w,
-                &$st.cr,
-                $st.ep,
-                &mut moves_buf,
+            perf_time!(
+                movegen_cycles,
+                movegen_calls,
+                $this,
+                generate_pseudo_moves_into_mode::<CHESS960>(
+                    $st,
+                    $st.w,
+                    &$st.cr,
+                    $st.ep,
+                    &mut moves_buf,
+                )
             );
         } else {
-            generate_moves_into_mode::<CHESS960>($st, $st.w, &$st.cr, $st.ep, &mut moves_buf);
+            perf_time!(
+                movegen_cycles,
+                movegen_calls,
+                $this,
+                generate_moves_into_mode::<CHESS960>($st, $st.w, &$st.cr, $st.ep, &mut moves_buf)
+            );
         }
         if moves_buf.is_empty() {
             Self::return_buf(&mut $this.move_bufs, $ply, moves_buf);
@@ -459,8 +479,13 @@ macro_rules! negamax_mode_body {
                     $this.debug.stats.probcut_eligible_nodes += 1;
                 }
                 let mut caps = Self::take_buf(&mut $this.caps_bufs, $ply);
-                generate_pseudo_captures_promotions_into_mode::<CHESS960>(
-                    $st, $st.w, &$st.cr, $st.ep, &mut caps,
+                perf_time!(
+                    movegen_cycles,
+                    movegen_calls,
+                    $this,
+                    generate_pseudo_captures_promotions_into_mode::<CHESS960>(
+                        $st, $st.w, &$st.cr, $st.ep, &mut caps,
+                    )
                 );
                 caps.sort_by_key(|mv| {
                     let from = move_from(*mv);
@@ -891,6 +916,7 @@ macro_rules! negamax_mode_body {
         };
 
         let mut scored = Self::take_buf(&mut $this.scored_bufs, $ply);
+        perf_region_start!(__perf_t0_score);
         scored.clear();
         scored.reserve(moves_buf.len());
         for &mv in moves_buf.iter() {
@@ -910,7 +936,12 @@ macro_rules! negamax_mode_body {
                     } else {
                         0
                     };
-                    let see_sc = move_see::<CHESS960>($st, mv, from, to, fpi, tpi);
+                    let see_sc = perf_time!(
+                        see_cycles,
+                        see_calls,
+                        $this,
+                        move_see::<CHESS960>($st, mv, from, to, fpi, tpi)
+                    );
                     if see_sc >= 0 {
                         s += 2_000_000 + v * 10 - a + see_sc;
                     } else {
@@ -941,6 +972,7 @@ macro_rules! negamax_mode_body {
         }
         Self::return_buf(&mut $this.move_bufs, $ply, moves_buf);
         scored.sort_unstable_by_key(|b| std::cmp::Reverse(b.0));
+        perf_region_end!(score_cycles, score_calls, $this, __perf_t0_score);
 
         let lmp_max_depth = tune::get_int(TuneParam::LmpMaxDepth, 8) as i32;
         let lmp_count = if $this.lmp_enabled()
@@ -1047,15 +1079,25 @@ macro_rules! negamax_mode_body {
 
             let st_before = *$st;
             let legal = if pseudo_moves {
-                try_apply_move_mode::<CHESS960>($st, mv)
+                perf_time!(
+                    apply_cycles,
+                    apply_calls,
+                    $this,
+                    try_apply_move_mode::<CHESS960>($st, mv)
+                )
             } else {
-                apply_move_mode::<CHESS960>(
-                    $st,
-                    move_sr(mv),
-                    move_sc(mv),
-                    move_er(mv),
-                    move_ec(mv),
-                    move_promotion(mv),
+                perf_time!(
+                    apply_cycles,
+                    apply_calls,
+                    $this,
+                    apply_move_mode::<CHESS960>(
+                        $st,
+                        move_sr(mv),
+                        move_sc(mv),
+                        move_er(mv),
+                        move_ec(mv),
+                        move_promotion(mv),
+                    )
                 );
                 true
             };
@@ -1323,13 +1365,18 @@ macro_rules! negamax_mode_body {
         if excluded_move.is_none() && !$this.restricted_verification_active() {
             #[cfg(feature = "search-debug")]
             $this.record_debug_dag_tt_store(h, actual_depth, best_score, flag, false);
-            $this.shared_tt.store_with_pv(
-                h,
-                actual_depth,
-                score_to_tt(best_score, $ply),
-                flag,
-                best_move,
-                is_pv,
+            perf_time!(
+                ttput_cycles,
+                ttput_calls,
+                $this,
+                $this.shared_tt.store_with_pv(
+                    h,
+                    actual_depth,
+                    score_to_tt(best_score, $ply),
+                    flag,
+                    best_move,
+                    is_pv,
+                )
             );
         }
         best_score

@@ -43,7 +43,7 @@ pub(crate) use self::classic::synthetic_test_net_bytes;
 pub(crate) use self::classic::{ClassicHalfKpAccumulator, ClassicHalfKpNet};
 pub(crate) use self::ember_v2_infer::{
     evaluate_ember_v2, evaluate_ember_v2_acc_with_backend, evaluate_ember_v2_with_backend,
-    EmberV2Accumulator, EmberV2Backend,
+    EmberV2Accumulator, EmberV2Backend, EmberV2ThreatDiffScratch,
 };
 pub(crate) use self::ember_v2_net::{EmberV2Data, EmberV2Info};
 pub use self::features::{

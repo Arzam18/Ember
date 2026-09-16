@@ -1,4 +1,5 @@
 use super::Searcher;
+use super::{perf_region_end, perf_region_start};
 use crate::board::{BoardState, MAX_PLY};
 use crate::nnue::{
     ClassicHalfKpNet, EmberV2Backend, EmberV2Data, NNUEAccumulator, NNUENet, NNUEThreatAccumulator,
@@ -143,10 +144,17 @@ impl<B: EmberV2Backend> SearchEval for EmberV2Eval<'_, B> {
 
     #[inline(always)]
     fn copy_null_acc(self, searcher: &mut Searcher, ply: usize) {
+        perf_region_start!(__perf_t0_nullcopy);
         if ply + 1 < searcher.ember_v2_stack.len() {
             let (parents, children) = searcher.ember_v2_stack.split_at_mut(ply + 1);
             children[0].clone_from(&parents[ply]);
         }
+        perf_region_end!(
+            nullcopy_cycles,
+            nullcopy_calls,
+            searcher,
+            __perf_t0_nullcopy
+        );
     }
 }
 

@@ -314,6 +314,8 @@ pub(crate) fn collect_active_threat_indices(
 }
 
 pub(crate) fn collect_active_threat_indices_both(state: &BoardState, outs: [&mut Vec<u16>; 2]) {
+    #[cfg(feature = "search-perf")]
+    let __perf_t0 = crate::search::perf::rdtsc();
     let [out_white, out_black] = outs;
     let lut = threat_lut();
     let king_squares = [find_king(state, 0), find_king(state, 1)];
@@ -372,6 +374,13 @@ pub(crate) fn collect_active_threat_indices_both(state: &BoardState, outs: [&mut
                 }
             }
         }
+    }
+    #[cfg(feature = "search-perf")]
+    {
+        let __perf_dt = crate::search::perf::rdtsc().wrapping_sub(__perf_t0);
+        crate::search::perf::THREAT_SCAN_CYCLES
+            .fetch_add(__perf_dt, std::sync::atomic::Ordering::Relaxed);
+        crate::search::perf::THREAT_SCAN_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -435,6 +444,80 @@ fn remove_threat_row<B: EmberV2Backend>(
     }
 }
 
+const THREAT_BITSET_WORDS: usize = THREAT_DIMS.div_ceil(64);
+
+#[derive(Default)]
+pub(crate) struct EmberV2ThreatDiffScratch {
+    old_bits: Vec<u64>,
+    new_bits: Vec<u64>,
+}
+
+impl EmberV2ThreatDiffScratch {
+    pub(crate) fn new() -> Self {
+        Self {
+            old_bits: vec![0; THREAT_BITSET_WORDS * 2],
+            new_bits: vec![0; THREAT_BITSET_WORDS * 2],
+        }
+    }
+}
+
+fn diff_threat_rows<B: EmberV2Backend>(
+    accumulator: &mut EmberV2Accumulator,
+    parent: &EmberV2Accumulator,
+    net: &EmberV2Data,
+    side: usize,
+    new_list: &[u16],
+    scratch: &mut EmberV2ThreatDiffScratch,
+) -> usize {
+    let old_list = &parent.threat_indices[side];
+    let word_base = side * THREAT_BITSET_WORDS;
+    let old_bits = &mut scratch.old_bits[word_base..word_base + THREAT_BITSET_WORDS];
+    let new_bits = &mut scratch.new_bits[word_base..word_base + THREAT_BITSET_WORDS];
+
+    for &index in old_list {
+        old_bits[(index >> 6) as usize] |= 1u64 << (index & 63);
+    }
+    for &index in new_list {
+        new_bits[(index >> 6) as usize] |= 1u64 << (index & 63);
+    }
+
+    let mut ops = 0usize;
+    for &index in old_list {
+        if new_bits[(index >> 6) as usize] & (1u64 << (index & 63)) == 0 {
+            remove_threat_row::<B>(
+                &mut accumulator.accumulation[side],
+                &mut accumulator.psqt[side],
+                &net.threat_weights
+                    [index as usize * HIDDEN_SIZE..(index as usize + 1) * HIDDEN_SIZE],
+                &net.threat_psqt
+                    [index as usize * PSQT_BUCKETS..(index as usize + 1) * PSQT_BUCKETS],
+            );
+            ops += 1;
+        }
+    }
+    for &index in new_list {
+        if old_bits[(index >> 6) as usize] & (1u64 << (index & 63)) == 0 {
+            add_threat_row::<B>(
+                &mut accumulator.accumulation[side],
+                &mut accumulator.psqt[side],
+                &net.threat_weights
+                    [index as usize * HIDDEN_SIZE..(index as usize + 1) * HIDDEN_SIZE],
+                &net.threat_psqt
+                    [index as usize * PSQT_BUCKETS..(index as usize + 1) * PSQT_BUCKETS],
+            );
+            ops += 1;
+        }
+    }
+
+    for &index in old_list {
+        old_bits[(index >> 6) as usize] &= !(1u64 << (index & 63));
+    }
+    for &index in new_list {
+        new_bits[(index >> 6) as usize] &= !(1u64 << (index & 63));
+    }
+    ops
+}
+
 #[derive(Clone)]
 pub(crate) struct EmberV2Accumulator {
     accumulation: [[i16; HIDDEN_SIZE]; 2],
@@ -456,6 +539,8 @@ impl EmberV2Accumulator {
         net: &EmberV2Data,
         state: &BoardState,
     ) {
+        #[cfg(feature = "search-perf")]
+        let __perf_t0 = crate::search::perf::rdtsc();
         let mut threat_lists = [
             std::mem::take(&mut self.threat_indices[0]),
             std::mem::take(&mut self.threat_indices[1]),
@@ -467,6 +552,14 @@ impl EmberV2Accumulator {
             self.rebuild_perspective::<B>(net, state, perspective, &threat_lists[side]);
         }
         self.threat_indices = threat_lists;
+        #[cfg(feature = "search-perf")]
+        {
+            let __perf_dt = crate::search::perf::rdtsc().wrapping_sub(__perf_t0);
+            crate::search::perf::ACC_REFRESH_CYCLES
+                .fetch_add(__perf_dt, std::sync::atomic::Ordering::Relaxed);
+            crate::search::perf::ACC_REFRESH_CALLS
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     fn rebuild_perspective<B: EmberV2Backend>(
@@ -516,9 +609,18 @@ impl EmberV2Accumulator {
         net: &EmberV2Data,
         before: &BoardState,
         after: &BoardState,
+        scratch: &mut EmberV2ThreatDiffScratch,
     ) {
+        #[cfg(feature = "search-perf")]
+        let __perf_t0 = crate::search::perf::rdtsc();
         self.accumulation = parent.accumulation;
         self.psqt = parent.psqt;
+        #[cfg(feature = "search-perf")]
+        {
+            let __perf_dt = crate::search::perf::rdtsc().wrapping_sub(__perf_t0);
+            crate::search::perf::ACC_COPY_CYCLES
+                .fetch_add(__perf_dt, std::sync::atomic::Ordering::Relaxed);
+        }
 
         let mut threat_lists = [
             std::mem::take(&mut self.threat_indices[0]),
@@ -526,21 +628,48 @@ impl EmberV2Accumulator {
         ];
         let [list_white, list_black] = &mut threat_lists;
         collect_active_threat_indices_both(after, [list_white, list_black]);
+        #[cfg(feature = "search-perf")]
+        let __perf_t1 = crate::search::perf::rdtsc();
 
+        let mut changed_squares = 0u64;
+        for (before_pieces, after_pieces) in before.bb.iter().zip(after.bb.iter()) {
+            changed_squares |= before_pieces ^ after_pieces;
+        }
+
+        #[cfg(feature = "search-perf")]
+        let mut threat_row_ops = 0usize;
         for perspective in 0..2u32 {
             let side = perspective as usize;
             if find_king(before, perspective) != find_king(after, perspective) {
+                #[cfg(feature = "search-perf")]
+                let __perf_t_rebuild = crate::search::perf::rdtsc();
                 self.rebuild_perspective::<B>(net, after, perspective, &threat_lists[side]);
+                #[cfg(feature = "search-perf")]
+                {
+                    let __perf_dt = crate::search::perf::rdtsc().wrapping_sub(__perf_t_rebuild);
+                    crate::search::perf::ACC_REBUILD_CYCLES
+                        .fetch_add(__perf_dt, std::sync::atomic::Ordering::Relaxed);
+                    crate::search::perf::ACC_REBUILD_CALLS
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 continue;
             }
 
             let king_square = find_king(after, perspective);
-            for square in 0..64u32 {
+            #[cfg(feature = "search-perf")]
+            let __perf_t_diff = crate::search::perf::rdtsc();
+            let mut squares = changed_squares;
+            while squares != 0 {
+                let square = squares.trailing_zeros();
+                squares &= squares - 1;
                 let before_piece = before.mailbox[square as usize];
                 let after_piece = after.mailbox[square as usize];
                 if before_piece == after_piece {
                     continue;
                 }
+                #[cfg(feature = "search-perf")]
+                crate::search::perf::ACC_PIECE_ROWS
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if before_piece != EMPTY_SQ {
                     let index =
                         halfka_index(perspective, square, u32::from(before_piece), king_square);
@@ -562,53 +691,35 @@ impl EmberV2Accumulator {
                     );
                 }
             }
-
-            threat_lists[side].sort_unstable();
-            let removed = &parent.threat_indices[side];
-            let added = &threat_lists[side];
-            let (mut before_index, mut after_index) = (0, 0);
-            while before_index < removed.len() || after_index < added.len() {
-                match (removed.get(before_index), added.get(after_index)) {
-                    (Some(&old), Some(&new)) if old == new => {
-                        before_index += 1;
-                        after_index += 1;
-                    }
-                    (Some(&old), Some(&new)) if old < new => {
-                        remove_threat_row::<B>(
-                            &mut self.accumulation[side],
-                            &mut self.psqt[side],
-                            &net.threat_weights
-                                [old as usize * HIDDEN_SIZE..(old as usize + 1) * HIDDEN_SIZE],
-                            &net.threat_psqt
-                                [old as usize * PSQT_BUCKETS..(old as usize + 1) * PSQT_BUCKETS],
-                        );
-                        before_index += 1;
-                    }
-                    (_, Some(&new)) => {
-                        add_threat_row::<B>(
-                            &mut self.accumulation[side],
-                            &mut self.psqt[side],
-                            &net.threat_weights
-                                [new as usize * HIDDEN_SIZE..(new as usize + 1) * HIDDEN_SIZE],
-                            &net.threat_psqt
-                                [new as usize * PSQT_BUCKETS..(new as usize + 1) * PSQT_BUCKETS],
-                        );
-                        after_index += 1;
-                    }
-                    (Some(&old), None) => {
-                        remove_threat_row::<B>(
-                            &mut self.accumulation[side],
-                            &mut self.psqt[side],
-                            &net.threat_weights
-                                [old as usize * HIDDEN_SIZE..(old as usize + 1) * HIDDEN_SIZE],
-                            &net.threat_psqt
-                                [old as usize * PSQT_BUCKETS..(old as usize + 1) * PSQT_BUCKETS],
-                        );
-                        before_index += 1;
-                    }
-                    (None, None) => break,
-                }
+            #[cfg(feature = "search-perf")]
+            {
+                let __perf_dt = crate::search::perf::rdtsc().wrapping_sub(__perf_t_diff);
+                crate::search::perf::ACC_DIFF_CYCLES
+                    .fetch_add(__perf_dt, std::sync::atomic::Ordering::Relaxed);
             }
+
+            #[cfg(feature = "search-perf")]
+            let __perf_t_tdiff = crate::search::perf::rdtsc();
+            #[cfg(feature = "search-perf")]
+            {
+                threat_row_ops +=
+                    diff_threat_rows::<B>(self, parent, net, side, &threat_lists[side], scratch);
+                let __perf_dt = crate::search::perf::rdtsc().wrapping_sub(__perf_t_tdiff);
+                crate::search::perf::ACC_THREATSORT_CYCLES
+                    .fetch_add(__perf_dt, std::sync::atomic::Ordering::Relaxed);
+            }
+            #[cfg(not(feature = "search-perf"))]
+            {
+                diff_threat_rows::<B>(self, parent, net, side, &threat_lists[side], scratch);
+            }
+        }
+        #[cfg(feature = "search-perf")]
+        {
+            crate::search::perf::ACC_THREAT_ROWS
+                .fetch_add(threat_row_ops as u64, std::sync::atomic::Ordering::Relaxed);
+            let __perf_dt = crate::search::perf::rdtsc().wrapping_sub(__perf_t0);
+            crate::search::perf::ACC_THREATDIFF_CYCLES
+                .fetch_add(__perf_dt, std::sync::atomic::Ordering::Relaxed);
         }
         self.threat_indices = threat_lists;
     }
@@ -1231,6 +1342,94 @@ mod tests {
     use super::{collect_active_threat_indices, halfka_index, threat_lut, THREAT_DIMS};
     use crate::Engine;
 
+    fn v2_chain_games(seed: u64, games: usize, plies: usize) -> (usize, usize) {
+        use super::EmberV2Accumulator;
+        use crate::board::{move_ec, move_er, move_promotion, move_sc, move_sr};
+        use crate::movegen::{apply_move, generate_moves};
+        use crate::nnue::SimdNnueBackend;
+        use rand::rngs::SmallRng;
+        use rand::seq::SliceRandom;
+        use rand::SeedableRng;
+
+        let net =
+            crate::evaluate::current_ember_v2().expect("embedded Ember V2 net must be initialized");
+        let mut scratch = super::EmberV2ThreatDiffScratch::new();
+        let mut rng = SmallRng::seed_from_u64(seed);
+        let mut checked = 0usize;
+        let mut mismatches = 0usize;
+
+        for _game in 0..games {
+            let mut engine = Engine::new();
+            engine.book = None;
+            engine.set_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+            let mut st = engine.st;
+            let mut true_acc = EmberV2Accumulator::new();
+            true_acc.refresh_with_backend::<SimdNnueBackend>(&net, &st);
+
+            for ply in 0..plies {
+                let moves = generate_moves(&st, st.w, &st.cr, st.ep);
+                if moves.is_empty() {
+                    break;
+                }
+                let mv = *moves.choose(&mut rng).unwrap();
+                let before = st;
+                let mut after = before;
+                apply_move(
+                    &mut after,
+                    move_sr(mv),
+                    move_sc(mv),
+                    move_er(mv),
+                    move_ec(mv),
+                    move_promotion(mv),
+                );
+
+                let mut incremental = EmberV2Accumulator::new();
+                incremental.update_from_parent_with_backend::<SimdNnueBackend>(
+                    &true_acc,
+                    &net,
+                    &before,
+                    &after,
+                    &mut scratch,
+                );
+                let mut refreshed = EmberV2Accumulator::new();
+                refreshed.refresh_with_backend::<SimdNnueBackend>(&net, &after);
+
+                checked += 1;
+                if incremental.accumulation != refreshed.accumulation
+                    || incremental.psqt != refreshed.psqt
+                {
+                    mismatches += 1;
+                    if mismatches <= 3 {
+                        let delta: i64 = incremental.accumulation[0]
+                            .iter()
+                            .zip(refreshed.accumulation[0].iter())
+                            .map(|(a, b)| i64::from(i32::from(*a) - i32::from(*b)).abs())
+                            .sum();
+                        eprintln!(
+                            "v2_chain mismatch after ply {ply} (seed {seed}): |accum0| delta sum = {delta}"
+                        );
+                    }
+                }
+                true_acc = refreshed;
+                st = after;
+            }
+        }
+        (checked, mismatches)
+    }
+
+    #[test]
+    fn v2_chain_parity_random_games() {
+        crate::evaluate::init_embedded_nnue().expect("embedded NNUE should load");
+        for seed in [1u64, 7, 12345] {
+            let (checked, mismatches) = v2_chain_games(seed, 4, 80);
+            assert_eq!(mismatches, 0, "v2 chain parity seed {seed}");
+            assert!(
+                checked >= 240,
+                "expected a full game sample, checked {checked}"
+            );
+        }
+    }
+
     fn synthetic_net(states: &[crate::board::BoardState]) -> super::EmberV2Data {
         let mut max_index = 0;
         for state in states {
@@ -1336,7 +1535,14 @@ mod tests {
         );
 
         let mut incremental = super::EmberV2Accumulator::new();
-        incremental.update_from_parent_with_backend::<B>(&backend_before, net, before, after);
+        let mut scratch = super::EmberV2ThreatDiffScratch::new();
+        incremental.update_from_parent_with_backend::<B>(
+            &backend_before,
+            net,
+            before,
+            after,
+            &mut scratch,
+        );
         let mut refreshed = super::EmberV2Accumulator::new();
         refreshed.refresh_with_backend::<B>(net, after);
         assert_eq!(incremental.accumulation, refreshed.accumulation);

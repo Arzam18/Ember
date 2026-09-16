@@ -16,9 +16,9 @@ use crate::movegen::{
 use crate::nnue::Avx512NnueBackend;
 use crate::nnue::{
     evaluate_ember_v2_acc_with_backend, evaluate_ember_v2_with_backend, ClassicHalfKpAccumulator,
-    ClassicHalfKpNet, EmberV2Accumulator, EmberV2Backend, EmberV2Data, NNUEAccumulator, NNUENet,
-    NNUEThreatAccumulator, NnueBackend, ScalarNnueBackend, Simd128NnueBackend, Simd512NnueBackend,
-    SimdNnueBackend,
+    ClassicHalfKpNet, EmberV2Accumulator, EmberV2Backend, EmberV2Data, EmberV2ThreatDiffScratch,
+    NNUEAccumulator, NNUENet, NNUEThreatAccumulator, NnueBackend, ScalarNnueBackend,
+    Simd128NnueBackend, Simd512NnueBackend, SimdNnueBackend,
 };
 use crate::syzygy::SyzygyTables;
 use crate::time_management::{iteration_time_decision, IterationTiming};
@@ -138,6 +138,7 @@ pub struct Searcher {
     pub threat_stack: Vec<NNUEThreatAccumulator>,
     pub(crate) ember_v2_stack: Vec<EmberV2Accumulator>,
     pub(crate) classic_stack: Vec<ClassicHalfKpAccumulator>,
+    pub(crate) v2_threat_scratch: EmberV2ThreatDiffScratch,
     pub nnue_net: Option<Arc<NNUENet>>,
     pub(crate) ember_v2_net: Option<Arc<EmberV2Data>>,
     pub(crate) classic_net: Option<Arc<ClassicHalfKpNet>>,
@@ -149,6 +150,8 @@ pub struct Searcher {
     caps_bufs: Vec<Vec<Move>>,
     #[cfg(feature = "search-debug")]
     pub debug: SearchDebug,
+    #[cfg_attr(not(feature = "search-perf"), allow(dead_code))]
+    pub(crate) perf: perf::PerfCounters,
 }
 
 mod eval;
@@ -157,12 +160,14 @@ use self::eval::{
 };
 
 mod negamax;
+pub(crate) mod perf;
 #[cfg(test)]
 use self::negamax::{
     lmp_king_pressure_safe, lmp_move_count, lmr_needs_full_depth_research, lmr_policy_eligible,
     lmr_reduction, lmr_reduction_is_saturated, lmr_reduction_with_history,
     tactical_check_extension_candidate,
 };
+pub(crate) use self::perf::{perf_region_end, perf_region_start, perf_time};
 mod qsearch;
 #[cfg(test)]
 use self::qsearch::{

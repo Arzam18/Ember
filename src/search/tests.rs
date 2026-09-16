@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 use crate::board::encode_move;
 use crate::engine::Engine;
 
@@ -1771,5 +1771,193 @@ fn draw_status_terminates_cycles_only_after_the_search_root() {
         searcher.draw_status(&st, 4, 1),
         DrawStatus::SearchCycle,
         "a second occurrence entirely inside the tree terminates the cycle"
+    );
+}
+
+#[test]
+#[ignore = "search-perf attribution report; run with --features search-perf -- --ignored --nocapture"]
+fn perf_counter_report() {
+    if !cfg!(feature = "search-perf") {
+        return;
+    }
+    crate::evaluate::init_embedded_nnue().expect("embedded NNUE should load");
+
+    const FENS: &[&str] = &[
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/2P5/1p2P3/2N2N2/PP1PBPPP/R2QK2R w KQkq - 0 1",
+        "r1bq1rk1/pp2bppp/2n1pn2/2pp4/3P4/2PBPN2/PP3PPP/RNBQ1RK1 w - - 0 8",
+        "2r2rk1/1b2bppp/p3pn2/1p1p4/3P4/1BN1PN2/PP3PPP/2R2RK1 w - - 0 14",
+        "8/2p2pk1/1p4p1/p2Pp3/P1P1P1P1/1P3K2/8/8 w - - 0 40",
+        "8/5pk1/6p1/3N4/3P4/5P2/6PK/8 w - - 0 45",
+        "8/P4k2/8/8/8/8/8/6K1 w - - 0 1",
+        "8/8/8/R2pP1k1/8/8/6Q1/4K3 w - d6 0 1",
+    ];
+    const DEPTH: i32 = 12;
+
+    let t0 = std::time::Instant::now();
+    let c0 = perf::rdtsc();
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let c1 = perf::rdtsc();
+    let t1 = std::time::Instant::now();
+    let tsc_hz = ((c1 - c0) as f64 / (t1 - t0).as_secs_f64()).max(1.0);
+
+    let load = |value: &std::sync::atomic::AtomicU64| value.load(Ordering::Relaxed);
+    let detail = |cycles: u64, total: u64| -> f64 {
+        if total == 0 {
+            0.0
+        } else {
+            100.0 * cycles as f64 / total as f64
+        }
+    };
+    let snapshot = |counters: &perf::PerfCounters| -> Vec<(&'static str, u64, u64)> {
+        vec![
+            (
+                "eval",
+                load(&counters.eval_cycles),
+                load(&counters.eval_calls),
+            ),
+            (
+                "accupd",
+                load(&counters.accupd_cycles),
+                load(&counters.accupd_calls),
+            ),
+            (
+                "movegen",
+                load(&counters.movegen_cycles),
+                load(&counters.movegen_calls),
+            ),
+            (
+                "ttget",
+                load(&counters.ttget_cycles),
+                load(&counters.ttget_calls),
+            ),
+            (
+                "ttput",
+                load(&counters.ttput_cycles),
+                load(&counters.ttput_calls),
+            ),
+            ("see", load(&counters.see_cycles), load(&counters.see_calls)),
+            (
+                "apply",
+                load(&counters.apply_cycles),
+                load(&counters.apply_calls),
+            ),
+            (
+                "draw",
+                load(&counters.draw_cycles),
+                load(&counters.draw_calls),
+            ),
+            (
+                "time",
+                load(&counters.time_cycles),
+                load(&counters.time_calls),
+            ),
+            (
+                "score",
+                load(&counters.score_cycles),
+                load(&counters.score_calls),
+            ),
+            (
+                "incheck",
+                load(&counters.incheck_cycles),
+                load(&counters.incheck_calls),
+            ),
+            (
+                "nullcopy",
+                load(&counters.nullcopy_cycles),
+                load(&counters.nullcopy_calls),
+            ),
+        ]
+    };
+
+    let mut totals: Vec<(&'static str, u64, u64)> = snapshot(&perf::PerfCounters::default())
+        .into_iter()
+        .map(|(name, _, _)| (name, 0, 0))
+        .collect();
+    let mut total_nodes = 0u64;
+    let mut total_elapsed = 0f64;
+
+    for fen in FENS {
+        let mut engine = Engine::new();
+        engine.book = None;
+        engine.num_threads = 1;
+        engine.searcher.resize_tt(64);
+        engine.set_fen(fen);
+        let (_, _, nodes, elapsed) = engine.find_best_move(60.0, DEPTH);
+        let counters = snapshot(&engine.searcher.perf);
+        for (index, (_, cycles, calls)) in counters.iter().enumerate() {
+            totals[index].1 += cycles;
+            totals[index].2 += calls;
+        }
+        println!(
+            "perf_report fen={fen} depth={DEPTH} nodes={nodes} elapsed={elapsed:.3}s nps={:.0}",
+            nodes as f64 / elapsed.max(1e-9)
+        );
+        total_nodes += nodes;
+        total_elapsed += elapsed;
+    }
+
+    let wall_cycles = (total_elapsed * tsc_hz) as u64;
+    #[cfg(feature = "search-perf")]
+    totals.insert(
+        0,
+        (
+            "threat",
+            perf::THREAT_SCAN_CYCLES.load(Ordering::Relaxed),
+            perf::THREAT_SCAN_CALLS.load(Ordering::Relaxed),
+        ),
+    );
+    let attributed: u64 = totals.iter().map(|(_, cycles, _)| cycles).sum();
+    totals.sort_by_key(|&(_, cycles, _)| std::cmp::Reverse(cycles));
+    println!(
+        "perf_report total nodes={total_nodes} elapsed={total_elapsed:.3}s nps={:.0} tsc_hz={tsc_hz:.0}",
+        total_nodes as f64 / total_elapsed.max(1e-9)
+    );
+    println!(
+        "perf_report {:<9} {:>12} {:>8} {:>12} {:>8}",
+        "phase", "cycles_M", "share%", "calls", "cyc/call"
+    );
+    for (name, cycles, calls) in &totals {
+        println!(
+            "perf_report {:<9} {:>12.1} {:>7.2} {:>12} {:>8}",
+            name,
+            *cycles as f64 / 1e6,
+            100.0 * *cycles as f64 / wall_cycles.max(1) as f64,
+            calls,
+            cycles / (*calls).max(1)
+        );
+    }
+    println!(
+        "perf_report {:<9} {:>12.1} {:>7.2}",
+        "unattributed",
+        wall_cycles.saturating_sub(attributed) as f64 / 1e6,
+        100.0 * wall_cycles.saturating_sub(attributed) as f64 / wall_cycles.max(1) as f64
+    );
+
+    let accupd_total = totals
+        .iter()
+        .find(|(name, _, _)| *name == "accupd")
+        .map(|(_, cycles, _)| *cycles)
+        .unwrap_or(0);
+    let copy = perf::ACC_COPY_CYCLES.load(Ordering::Relaxed);
+    let diff = perf::ACC_DIFF_CYCLES.load(Ordering::Relaxed);
+    let piece_rows = perf::ACC_PIECE_ROWS.load(Ordering::Relaxed);
+    let rebuild = perf::ACC_REBUILD_CYCLES.load(Ordering::Relaxed);
+    let rebuild_calls = perf::ACC_REBUILD_CALLS.load(Ordering::Relaxed);
+    let tdiff = perf::ACC_THREATSORT_CYCLES.load(Ordering::Relaxed);
+    let threat_rows = perf::ACC_THREAT_ROWS.load(Ordering::Relaxed);
+    let refresh = perf::ACC_REFRESH_CYCLES.load(Ordering::Relaxed);
+    let refresh_calls = perf::ACC_REFRESH_CALLS.load(Ordering::Relaxed);
+    println!(
+        "perf_report accupd detail: copy={:.2}% diff={:.2}% piece_rows={} rebuild={:.2}% rebuild_calls={} threat_diff={:.2}% threat_rows={} refresh={:.2}% refresh_calls={}",
+        detail(copy, accupd_total),
+        detail(diff, accupd_total),
+        piece_rows,
+        detail(rebuild, accupd_total),
+        rebuild_calls,
+        detail(tdiff, accupd_total),
+        threat_rows,
+        detail(refresh, accupd_total),
+        refresh_calls,
     );
 }

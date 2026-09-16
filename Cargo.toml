@@ -25,6 +25,7 @@ default = ["mimalloc"]
 decision-trace = []
 mimalloc = ["dep:mimalloc"]
 search-debug = []
+search-perf = []
  
 [profile.release]
 opt-level = 3

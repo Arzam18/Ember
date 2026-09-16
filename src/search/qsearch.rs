@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 const QSEARCH_DELTA_MARGIN_CP: i32 = 1125;
 const QSEARCH_CHECK_CAP_DEPTH: i32 = 4;
@@ -109,10 +109,20 @@ macro_rules! qsearch_mode_body {
         $this.ensure_buf_pools($ply);
         let mut caps = Self::take_buf(&mut $this.move_bufs, $ply);
         if in_check {
-            generate_moves_into_mode::<CHESS960>($st, $st.w, &$st.cr, $st.ep, &mut caps);
+            perf_time!(
+                movegen_cycles,
+                movegen_calls,
+                $this,
+                generate_moves_into_mode::<CHESS960>($st, $st.w, &$st.cr, $st.ep, &mut caps)
+            );
         } else {
-            generate_pseudo_captures_promotions_into_mode::<CHESS960>(
-                $st, $st.w, &$st.cr, $st.ep, &mut caps,
+            perf_time!(
+                movegen_cycles,
+                movegen_calls,
+                $this,
+                generate_pseudo_captures_promotions_into_mode::<CHESS960>(
+                    $st, $st.w, &$st.cr, $st.ep, &mut caps,
+                )
             );
         }
         if caps.is_empty() {
@@ -165,7 +175,12 @@ macro_rules! qsearch_mode_body {
                 && excluded_move.is_none()
                 && qsearch_see_threshold.is_some_and(|threshold| {
                     qsearch_see_prunable(
-                        move_see::<CHESS960>($st, mv, from, to, fpi, tpi),
+                        perf_time!(
+                            see_cycles,
+                            see_calls,
+                            $this,
+                            move_see::<CHESS960>($st, mv, from, to, fpi, tpi)
+                        ),
                         threshold,
                     )
                 })
@@ -178,17 +193,27 @@ macro_rules! qsearch_mode_body {
             }
             let st_before = *$st;
             let legal = if in_check {
-                apply_move_mode::<CHESS960>(
-                    $st,
-                    move_sr(mv),
-                    move_sc(mv),
-                    move_er(mv),
-                    move_ec(mv),
-                    move_promotion(mv),
+                perf_time!(
+                    apply_cycles,
+                    apply_calls,
+                    $this,
+                    apply_move_mode::<CHESS960>(
+                        $st,
+                        move_sr(mv),
+                        move_sc(mv),
+                        move_er(mv),
+                        move_ec(mv),
+                        move_promotion(mv),
+                    )
                 );
                 true
             } else {
-                try_apply_move_mode::<CHESS960>($st, mv)
+                perf_time!(
+                    apply_cycles,
+                    apply_calls,
+                    $this,
+                    try_apply_move_mode::<CHESS960>($st, mv)
+                )
             };
             if !legal {
                 continue;

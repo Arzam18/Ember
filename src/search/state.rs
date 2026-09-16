@@ -138,6 +138,7 @@ impl Searcher {
             threat_stack: Vec::new(),
             ember_v2_stack: Vec::new(),
             classic_stack: Vec::new(),
+            v2_threat_scratch: EmberV2ThreatDiffScratch::new(),
             nnue_net: current_nnue_net(),
             ember_v2_net: current_ember_v2(),
             classic_net: current_classic_net(),
@@ -149,6 +150,7 @@ impl Searcher {
             caps_bufs: Vec::new(),
             #[cfg(feature = "search-debug")]
             debug: SearchDebug::from_env(),
+            perf: perf::PerfCounters::default(),
         }
     }
 
@@ -299,18 +301,21 @@ impl Searcher {
 
     #[inline]
     pub(super) fn time_up(&self, start: Instant, tl: f64) -> bool {
-        if self.stopped.load(Ordering::Relaxed) {
-            return true;
-        }
-        if self.pondering.load(Ordering::Relaxed) {
-            return false;
-        }
-        if start.elapsed().as_secs_f64() > tl {
-            self.set_stopped();
-            true
-        } else {
-            false
-        }
+        perf_region_start!(__perf_t0_time);
+        let result = {
+            if self.stopped.load(Ordering::Relaxed) {
+                true
+            } else if self.pondering.load(Ordering::Relaxed) {
+                false
+            } else if start.elapsed().as_secs_f64() > tl {
+                self.set_stopped();
+                true
+            } else {
+                false
+            }
+        };
+        perf_region_end!(time_cycles, time_calls, self, __perf_t0_time);
+        result
     }
 
     #[inline]
@@ -320,32 +325,38 @@ impl Searcher {
         tl: f64,
         local_nodes: u64,
     ) -> bool {
-        if self.stopped.load(Ordering::Relaxed) {
-            return true;
-        }
-        if NODE_LIMITED {
-            let limit = self
-                .node_limit
-                .expect("node-limited search was started without a node limit");
-            let searched_nodes = if let Some(counter) = &self.shared_node_counter {
-                counter.fetch_add(1, Ordering::Relaxed).saturating_add(1)
+        perf_region_start!(__perf_t0_time);
+        let result = {
+            if self.stopped.load(Ordering::Relaxed) {
+                true
             } else {
-                local_nodes
-            };
-            if searched_nodes >= limit {
-                self.set_stopped();
-                return true;
+                if NODE_LIMITED {
+                    let limit = self
+                        .node_limit
+                        .expect("node-limited search was started without a node limit");
+                    let searched_nodes = if let Some(counter) = &self.shared_node_counter {
+                        counter.fetch_add(1, Ordering::Relaxed).saturating_add(1)
+                    } else {
+                        local_nodes
+                    };
+                    if searched_nodes >= limit {
+                        self.set_stopped();
+                        perf_region_end!(time_cycles, time_calls, self, __perf_t0_time);
+                        return true;
+                    }
+                }
+                if self.pondering.load(Ordering::Relaxed) {
+                    false
+                } else if start.elapsed().as_secs_f64() > tl {
+                    self.set_stopped();
+                    true
+                } else {
+                    false
+                }
             }
-        }
-        if self.pondering.load(Ordering::Relaxed) {
-            return false;
-        }
-        if start.elapsed().as_secs_f64() > tl {
-            self.set_stopped();
-            true
-        } else {
-            false
-        }
+        };
+        perf_region_end!(time_cycles, time_calls, self, __perf_t0_time);
+        result
     }
 
     pub fn set_stopped(&self) {
@@ -1092,9 +1103,19 @@ impl Searcher {
             return self.static_eval_classic::<CHESS960>(st);
         }
         let base = if let Some(accumulator) = self.ember_v2_stack.get(ply) {
-            evaluate_ember_v2_acc_with_backend::<B>(net, accumulator, st)
+            perf_time!(
+                eval_cycles,
+                eval_calls,
+                self,
+                evaluate_ember_v2_acc_with_backend::<B>(net, accumulator, st)
+            )
         } else {
-            evaluate_ember_v2_with_backend::<B>(net, st)
+            perf_time!(
+                eval_cycles,
+                eval_calls,
+                self,
+                evaluate_ember_v2_with_backend::<B>(net, st)
+            )
         };
         with_endgame_mopup(self.endgame_mopup_enabled(), st, base)
     }
@@ -1371,16 +1392,21 @@ impl Searcher {
         minimum_ply: usize,
         in_check: bool,
     ) -> Option<i32> {
-        let status = self.draw_status(st, ply, minimum_ply);
-        #[cfg(feature = "search-debug")]
-        self.record_debug_dag_draw(st.hash, status);
-        if status == DrawStatus::None {
-            return None;
-        }
-        if in_check && generate_moves(st, st.w, &st.cr, st.ep).is_empty() {
-            return Some(-MATE + ply as i32);
-        }
-        Some(0)
+        perf_region_start!(__perf_t0_draw);
+        let result = {
+            let status = self.draw_status(st, ply, minimum_ply);
+            #[cfg(feature = "search-debug")]
+            self.record_debug_dag_draw(st.hash, status);
+            if status == DrawStatus::None {
+                None
+            } else if in_check && generate_moves(st, st.w, &st.cr, st.ep).is_empty() {
+                Some(-MATE + ply as i32)
+            } else {
+                Some(0)
+            }
+        };
+        perf_region_end!(draw_cycles, draw_calls, self, __perf_t0_draw);
+        result
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1419,11 +1445,20 @@ impl Searcher {
         after: &BoardState,
         ply: usize,
     ) {
+        perf_region_start!(__perf_t0_accupd);
         if ply + 1 >= self.ember_v2_stack.len() {
             return;
         }
         let (parents, children) = self.ember_v2_stack.split_at_mut(ply + 1);
-        children[0].update_from_parent_with_backend::<B>(&parents[ply], net, before, after);
+        let scratch = &mut self.v2_threat_scratch;
+        children[0].update_from_parent_with_backend::<B>(
+            &parents[ply],
+            net,
+            before,
+            after,
+            scratch,
+        );
+        perf_region_end!(accupd_cycles, accupd_calls, self, __perf_t0_accupd);
     }
 
     pub(super) fn push_classic_acc(
