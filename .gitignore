@@ -54,6 +54,7 @@ __pycache__/
 1.sh
 /nn-*.nnue
 /net-*.nnue
+/networks/
 .scratch/
 /baseline-worktree/
 NOTES_EXTERNAL_NETS.md
