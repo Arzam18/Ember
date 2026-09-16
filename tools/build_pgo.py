@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import time
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+PGO_DATA = REPO / "pgo-data"
+MERGED_PROFILE = PGO_DATA / "merged.profdata"
+INSTRUMENTED_DIR = REPO / "target-pgo"
+OPTIMIZED_DIR = REPO / "target-pgo-use"
+DEFAULT_RUSTFLAGS = "-C target-cpu=x86-64-v3"
+
+
+def find_llvm_profdata() -> pathlib.Path:
+    override = os.environ.get("EMBER_LLVM_PROFDATA")
+    if override:
+        path = pathlib.Path(override)
+        if path.is_file():
+            return path
+    rustup_home = pathlib.Path(os.environ.get("RUSTUP_HOME", pathlib.Path.home() / ".rustup"))
+    toolchains = rustup_home / "toolchains"
+    candidates = sorted(toolchains.glob("*/lib/rustlib/*/bin/llvm-profdata.exe"))
+    candidates += sorted(toolchains.glob("*/lib/rustlib/*/bin/llvm-profdata"))
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    found = shutil.which("llvm-profdata")
+    if found:
+        return pathlib.Path(found)
+    raise SystemExit(
+        "llvm-profdata not found. Run: rustup component add llvm-tools "
+        "(or set EMBER_LLVM_PROFDATA to the binary path)."
+    )
+
+
+def run_cargo(rustflags: str, target_dir: pathlib.Path) -> None:
+    env = dict(os.environ)
+    env["RUSTFLAGS"] = rustflags
+    started = time.monotonic()
+    subprocess.run(
+        ["cargo", "build", "--release", "--locked", f"--target-dir={target_dir.name}"],
+        cwd=REPO,
+        env=env,
+        check=True,
+    )
+    print(f"cargo build finished in {time.monotonic() - started:.0f}s (target-dir={target_dir.name})")
+
+
+def run_bench(binary: pathlib.Path, depths: list[int]) -> list[tuple[int, str, int]]:
+    input_text = "".join(f"bench depth {d}\n" for d in depths) + "quit\n"
+    proc = subprocess.run(
+        [str(binary)],
+        input=input_text,
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    results: list[tuple[int, str, int]] = []
+    for line in (proc.stdout + proc.stderr).splitlines():
+        if "bench total:" not in line:
+            continue
+        fields = [token.rstrip(",") for token in line.split()]
+        depth = int(fields[fields.index("depth") + 1])
+        nodes = int(fields[fields.index("nodes") + 1])
+        signature = fields[fields.index("signature") + 1]
+        results.append((depth, signature, nodes))
+        print(f"  depth {depth}: nodes {nodes} signature {signature}")
+    if len(results) != len(depths):
+        raise SystemExit(f"bench produced {len(results)} totals, expected {len(depths)}")
+    if [depth for depth, _, _ in results] != depths:
+        raise SystemExit(f"bench depths {results} do not match requested {depths}")
+    return results
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--depths", type=int, nargs="+", default=[12, 14], help="profile workload bench depths")
+    parser.add_argument(
+        "--verify-depths", type=int, nargs="+", default=[8, 12, 14],
+        help="bench depths used for the plain-vs-PGO signature comparison",
+    )
+    parser.add_argument("--rustflags", default=DEFAULT_RUSTFLAGS, help="base RUSTFLAGS, e.g. target-cpu")
+    args = parser.parse_args()
+
+    profdata_tool = find_llvm_profdata()
+    PGO_DATA.mkdir(exist_ok=True)
+
+    print("== step 1/5: instrumented build ==")
+    run_cargo(f"{args.rustflags} -Cprofile-generate={PGO_DATA.as_posix()}", INSTRUMENTED_DIR)
+    instrumented = INSTRUMENTED_DIR / "release" / "ember.exe"
+
+    print("== step 2/5: profile workload ==")
+    for stale in PGO_DATA.glob("*.profraw"):
+        stale.unlink()
+    run_bench(instrumented, args.depths)
+    raw_profiles = sorted(PGO_DATA.glob("*.profraw"))
+    if not raw_profiles:
+        raise SystemExit("no .profraw written; the process must exit normally (no kill/panic)")
+    print(f"  collected {len(raw_profiles)} profile(s)")
+
+    print("== step 3/5: merge profile ==")
+    subprocess.run(
+        [str(profdata_tool), "merge", "-o", str(MERGED_PROFILE)] + [str(p) for p in raw_profiles],
+        check=True,
+    )
+    print(f"  {MERGED_PROFILE} ({MERGED_PROFILE.stat().st_size / 1e6:.1f} MB)")
+
+    print("== step 4/5: PGO build ==")
+    run_cargo(f"{args.rustflags} -Cprofile-use={MERGED_PROFILE.as_posix()}", OPTIMIZED_DIR)
+    optimized = OPTIMIZED_DIR / "release" / "ember.exe"
+
+    print("== step 5/5: verify identical behavior ==")
+    plain = REPO / "target" / "release" / "ember.exe"
+    if not plain.is_file():
+        raise SystemExit(f"plain release binary not found at {plain}; build it first for comparison")
+    plain_results = run_bench(plain, args.verify_depths)
+    pgo_results = run_bench(optimized, args.verify_depths)
+    for (depth, plain_sig, plain_nodes), (_, pgo_sig, pgo_nodes) in zip(plain_results, pgo_results):
+        if plain_sig != pgo_sig or plain_nodes != pgo_nodes:
+            raise SystemExit(
+                f"behavior mismatch at depth {depth}: plain {plain_sig}/{plain_nodes} "
+                f"vs pgo {pgo_sig}/{pgo_nodes}"
+            )
+    print("PGO binary matches the plain binary on every verified bench signature.")
+
+
+if __name__ == "__main__":
+    main()

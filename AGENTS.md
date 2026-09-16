@@ -302,6 +302,26 @@ A search-debug runtime switch is not enough if release search still updates path
 collects evidence on every node. Confirm the absence of hidden scaffolding cost with a
 release NPS and search-shape comparison.
 
+### PGO release builds
+
+Performance-relevant release binaries are built with profile-guided optimization
+(`tools/build_pgo.py`). PGO changes compiler layout and inlining decisions only, never
+program semantics, so it counts as a pure speedup: the PGO binary must reproduce the
+plain release binary's bench signature and node counts exactly, and it still needs the
+standard paired NPS comparison before adoption.
+
+- Run `python tools/build_pgo.py` to instrument, collect, merge, rebuild, and verify in
+  one step. It requires `rustup component add llvm-tools`.
+- Keep the profile workload representative of real play: the default fixed-depth bench
+  run covers the standard positions; extend it when search or evaluation changes
+  materially, because inlining decisions shift with the code.
+- Profiles are local artifacts (`pgo-data/`, gitignored). Regenerate them after engine
+  changes rather than reusing stale profiles across refactors.
+- The Nix `ci` shell and CI builds remain plain (no PGO) and act as the portability and
+  correctness gate; wire profile generation into the Nix release packaging before
+  shipping PGO binaries from release tags.
+- Verify with the paired-NPS workflow above on the same machine before and after.
+
 ### Elo and game comparisons
 
 Choose the harness that matches the question:

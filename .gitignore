@@ -56,6 +56,9 @@ __pycache__/
 /net-*.nnue
 /networks/
 .scratch/
+/pgo-data/
+/target-pgo/
+/target-pgo-use/
 /baseline-worktree/
 NOTES_EXTERNAL_NETS.md
 /*.out
