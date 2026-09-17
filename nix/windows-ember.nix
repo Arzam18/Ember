@@ -2,6 +2,9 @@
   pkgs,
   lib,
   arch ? "amd64",
+  # Same-arch LLVM profile from the Linux profile derivation, or null for a
+  # plain build. Function-level counters transfer across OS builds.
+  pgoProfile ? null,
 }:
 
 let
@@ -97,6 +100,8 @@ let
     rustc = windowsRustToolchain;
   };
   version = (builtins.fromTOML (builtins.readFile ../Cargo.toml)).package.version;
+  profileUseFlag =
+    if pgoProfile == null then "" else " -Cprofile-use=${pgoProfile}/merged.profdata";
 
   emberWindows = rustPlatform.buildRustPackage {
     pname = "ember-windows-${arch}";
@@ -121,7 +126,7 @@ let
       mkdir -p "$HOME" "$XWIN_CACHE_DIR"
       cp -R "${xwinSdk}/." "$XWIN_CACHE_DIR/"
       chmod -R u+w "$XWIN_CACHE_DIR"
-      export RUSTFLAGS="${rustFlags}"
+      export RUSTFLAGS="${rustFlags}${profileUseFlag}"
       cargo_xwin_args=(
         --offline
         ${cargoBuildArrayItems}
@@ -151,6 +156,7 @@ let
       targetCpu = defaultTargetCpu;
       allocator = if arch == "amd64" then "mimalloc" else "system";
       linkage = "static-msvc-crt";
+      pgo = pgoProfile != null;
     };
   };
 

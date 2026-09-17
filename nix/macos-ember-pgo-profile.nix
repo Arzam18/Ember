@@ -4,18 +4,19 @@
   rust-overlay,
   lib,
   arch,
-  # Same-arch LLVM profile from nix/macos-ember-pgo-profile.nix, or null for
-  # a plain build.
-  pgoProfile ? null,
 }:
 
+# Builds an instrumented macOS ember for the target architecture, runs a
+# deterministic fixed-depth bench workload (natively for arm64, under
+# Rosetta 2 for amd64), and installs the merged LLVM profile. The same-arch
+# profile is reused by the macOS release package of that architecture.
 let
   target =
     {
       amd64 = "x86_64-apple-darwin";
       arm64 = "aarch64-apple-darwin";
     }
-    .${arch} or (throw "unsupported macOS Ember architecture: ${arch}");
+    .${arch} or (throw "unsupported macOS PGO profile architecture: ${arch}");
   targetSystem =
     {
       amd64 = "x86_64-darwin";
@@ -24,12 +25,19 @@ let
     .${arch};
   targetCpu =
     {
-      # Keep the baseline runnable under Rosetta 2. Ember's runtime dispatch
-      # still selects its AVX2 search and NNUE backends on capable Intel Macs.
       amd64 = "x86-64";
       arm64 = "apple-m1";
     }
     .${arch};
+  nativeSystem = pkgs.stdenv.hostPlatform.system;
+  profileSystem =
+    {
+      amd64 = "x86_64-darwin";
+      arm64 = "aarch64-darwin";
+    }
+    .${arch};
+  # Rosetta 2 runs the cross-arch instrumented binary inside the sandbox.
+  emulator = if nativeSystem == profileSystem then "" else "/usr/bin/arch -x86_64 ";
   targetPackages = import nixpkgs (
     {
       localSystem = pkgs.stdenv.hostPlatform.system;
@@ -56,11 +64,9 @@ let
     rustc = rustToolchain;
   };
   version = (builtins.fromTOML (builtins.readFile ../Cargo.toml)).package.version;
-  profileUseFlag =
-    if pgoProfile == null then "" else " -Cprofile-use=${pgoProfile}/merged.profdata";
 in
 rustPlatform.buildRustPackage {
-  pname = "ember-macos-${arch}";
+  pname = "ember-macos-pgo-profile-${arch}";
   inherit version;
 
   src = import ./ember-source.nix { inherit lib; };
@@ -68,48 +74,31 @@ rustPlatform.buildRustPackage {
 
   nativeBuildInputs = [
     targetCc
-    pkgs.buildPackages.file
+    pkgs.llvmPackages.llvm
   ];
 
   buildPhase = ''
     runHook preBuild
     export CARGO_TARGET_${cargoTargetEnv}_LINKER="${linker}"
     export MACOSX_DEPLOYMENT_TARGET=11.0
-    export RUSTFLAGS="-C target-cpu=${targetCpu}${profileUseFlag}"
+    export RUSTFLAGS="-C target-cpu=${targetCpu} -Cprofile-generate=$PWD/profraw"
+    mkdir -p profraw
     cargo build --frozen --release --bin ember --target ${target}
     runHook postBuild
   '';
 
   installPhase = ''
     runHook preInstall
-    mkdir -p "$out/bin"
-    cp "target/${target}/release/ember" "$out/bin/ember"
-
-    # The Darwin linker can record Nix's libiconv install name. macOS provides
-    # the same stable system library, and release archives must not require a
-    # user's Nix store.
-    while read -r dependency _; do
-      case "$dependency" in
-        /nix/store/*-libiconv-*/lib/libiconv.2.dylib)
-          install_name_tool -change \
-            "$dependency" \
-            /usr/lib/libiconv.2.dylib \
-            "$out/bin/ember"
-          ;;
-      esac
-    done < <(otool -L "$out/bin/ember" | tail -n +2)
-
-    while read -r dependency _; do
-      case "$dependency" in
-        /usr/lib/*|/System/Library/*) ;;
-        *)
-          echo "macOS release binary has a non-system dependency: $dependency" >&2
-          exit 1
-          ;;
-      esac
-    done < <(otool -L "$out/bin/ember" | tail -n +2)
-
-    file "$out/bin/ember" | tee "$out/FILE.txt"
+    printf 'bench depth 12\nbench depth 14\nquit\n' \
+      | ${emulator}target/${target}/release/ember >/dev/null
+    ${pkgs.llvmPackages.llvm}/bin/llvm-profdata merge \
+      -o merged.profdata profraw/*.profraw
+    test -s merged.profdata || {
+      echo "PGO profile merge produced no data" >&2
+      exit 1
+    }
+    mkdir -p "$out"
+    cp merged.profdata "$out/merged.profdata"
     runHook postInstall
   '';
 
@@ -117,20 +106,12 @@ rustPlatform.buildRustPackage {
   dontFixup = true;
 
   passthru = {
-    inherit
-      arch
-      target
-      targetCpu
-      targetSystem
-      ;
-    allocator = "system";
-    linkage = "system-libSystem";
-    minimumMacOS = "11.0";
-    pgo = pgoProfile != null;
+    inherit arch target;
+    workload = "bench depth 12; bench depth 14";
   };
 
   meta = {
-    description = "Self-contained Ember chess engine for macOS ${arch}";
+    description = "LLVM PGO profile for Ember macOS ${arch} release builds";
     mainProgram = "ember";
   };
 }

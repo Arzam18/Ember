@@ -17,6 +17,14 @@ OPTIMIZED_DIR = REPO / "target-pgo-use"
 DEFAULT_RUSTFLAGS = "-C target-cpu=x86-64-v3"
 
 
+def binary_name() -> str:
+    return "ember.exe" if os.name == "nt" else "ember"
+
+
+def binary_path(target_dir: pathlib.Path, target: str | None) -> pathlib.Path:
+    return target_dir / (target or "") / "release" / binary_name()
+
+
 def find_llvm_profdata() -> pathlib.Path:
     override = os.environ.get("EMBER_LLVM_PROFDATA")
     if override:
@@ -39,16 +47,20 @@ def find_llvm_profdata() -> pathlib.Path:
     )
 
 
-def run_cargo(rustflags: str, target_dir: pathlib.Path) -> None:
+def run_cargo(
+    rustflags: str,
+    target_dir: pathlib.Path,
+    extra_args: list[str],
+    target: str | None,
+) -> None:
     env = dict(os.environ)
     env["RUSTFLAGS"] = rustflags
+    command = ["cargo", "build", "--release", "--locked", f"--target-dir={target_dir.name}"]
+    if target:
+        command.append(f"--target={target}")
+    command.extend(extra_args)
     started = time.monotonic()
-    subprocess.run(
-        ["cargo", "build", "--release", "--locked", f"--target-dir={target_dir.name}"],
-        cwd=REPO,
-        env=env,
-        check=True,
-    )
+    subprocess.run(command, cwd=REPO, env=env, check=True)
     print(f"cargo build finished in {time.monotonic() - started:.0f}s (target-dir={target_dir.name})")
 
 
@@ -87,14 +99,19 @@ def main() -> None:
         help="bench depths used for the plain-vs-PGO signature comparison",
     )
     parser.add_argument("--rustflags", default=DEFAULT_RUSTFLAGS, help="base RUSTFLAGS, e.g. target-cpu")
+    parser.add_argument("--target", default=None, help="optional cargo --target triple")
+    parser.add_argument(
+        "--cargo-args", nargs="*", default=[],
+        help="extra cargo build args, e.g. --bin ember",
+    )
     args = parser.parse_args()
 
     profdata_tool = find_llvm_profdata()
     PGO_DATA.mkdir(exist_ok=True)
 
     print("== step 1/5: instrumented build ==")
-    run_cargo(f"{args.rustflags} -Cprofile-generate={PGO_DATA.as_posix()}", INSTRUMENTED_DIR)
-    instrumented = INSTRUMENTED_DIR / "release" / "ember.exe"
+    run_cargo(f"{args.rustflags} -Cprofile-generate={PGO_DATA.as_posix()}", INSTRUMENTED_DIR, args.cargo_args, args.target)
+    instrumented = binary_path(INSTRUMENTED_DIR, args.target)
 
     print("== step 2/5: profile workload ==")
     for stale in PGO_DATA.glob("*.profraw"):
@@ -113,11 +130,11 @@ def main() -> None:
     print(f"  {MERGED_PROFILE} ({MERGED_PROFILE.stat().st_size / 1e6:.1f} MB)")
 
     print("== step 4/5: PGO build ==")
-    run_cargo(f"{args.rustflags} -Cprofile-use={MERGED_PROFILE.as_posix()}", OPTIMIZED_DIR)
-    optimized = OPTIMIZED_DIR / "release" / "ember.exe"
+    run_cargo(f"{args.rustflags} -Cprofile-use={MERGED_PROFILE.as_posix()}", OPTIMIZED_DIR, args.cargo_args, args.target)
+    optimized = binary_path(OPTIMIZED_DIR, args.target)
 
     print("== step 5/5: verify identical behavior ==")
-    plain = REPO / "target" / "release" / "ember.exe"
+    plain = binary_path(REPO / "target", args.target)
     if not plain.is_file():
         raise SystemExit(f"plain release binary not found at {plain}; build it first for comparison")
     plain_results = run_bench(plain, args.verify_depths)

@@ -2,25 +2,42 @@
   pkgs,
   lib,
   arch,
-  # Same-arch LLVM profile from nix/ember-pgo-profile.nix, or null for a
-  # plain build. PGO data is function-level counting over the shared IR, so
-  # the Linux profile also serves the Windows and macOS builds of this arch.
-  pgoProfile ? null,
 }:
 
+# Builds an instrumented static Linux ember, runs a deterministic fixed-depth
+# bench workload, and installs the merged LLVM profile. PGO data is
+# function-level execution counting over target-independent IR, so the
+# same-arch profile is reused by the Linux, Windows, and macOS release
+# packages of that architecture.
+#
+# amd64 runs the workload natively on x86_64 builders; arm64 runs it under
+# qemu-aarch64 (counters are exact under user-mode emulation, only wall time
+# grows). On non-x86_64 Linux hosts amd64 runs under qemu-x86_64 as well.
 let
   target =
     {
       amd64 = "x86_64-unknown-linux-musl";
       arm64 = "aarch64-unknown-linux-musl";
     }
-    .${arch} or (throw "unsupported Linux Ember architecture: ${arch}");
+    .${arch} or (throw "unsupported PGO profile architecture: ${arch}");
   targetCpu =
     {
       amd64 = "x86-64-v3";
       arm64 = "generic";
     }
     .${arch};
+  nativeSystem = pkgs.stdenv.hostPlatform.system;
+  profileSystem =
+    {
+      amd64 = "x86_64-linux";
+      arm64 = "aarch64-linux";
+    }
+    .${arch};
+  emulator =
+    if nativeSystem == profileSystem then
+      ""
+    else
+      "${pkgs.qemu-user}/bin/qemu-${if arch == "arm64" then "aarch64" else "x86_64"} ";
   crossPackages =
     {
       amd64 = pkgs.pkgsCross.musl64;
@@ -43,11 +60,9 @@ let
     rustc = rustToolchain;
   };
   version = (builtins.fromTOML (builtins.readFile ../Cargo.toml)).package.version;
-  profileUseFlag =
-    if pgoProfile == null then "" else " -Cprofile-use=${pgoProfile}/merged.profdata";
 in
 rustPlatform.buildRustPackage {
-  pname = "ember-linux-${arch}";
+  pname = "ember-pgo-profile-${arch}";
   inherit version;
 
   src = import ./ember-source.nix { inherit lib; };
@@ -56,33 +71,32 @@ rustPlatform.buildRustPackage {
   nativeBuildInputs = [
     crossCc
     pkgs.buildPackages.binutils
-    pkgs.buildPackages.file
-  ];
+    pkgs.llvmPackages.llvm
+  ] ++ pkgs.lib.optionals (emulator != "") [ pkgs.qemu-user ];
 
   buildPhase = ''
     runHook preBuild
     export CARGO_TARGET_${cargoTargetEnv}_LINKER="${linker}"
     export CC_${builtins.replaceStrings [ "-" ] [ "_" ] target}="${linker}"
     export AR_${builtins.replaceStrings [ "-" ] [ "_" ] target}="${archiver}"
-    export RUSTFLAGS="-C target-cpu=${targetCpu} -C target-feature=+crt-static${profileUseFlag}"
+    export RUSTFLAGS="-C target-cpu=${targetCpu} -C target-feature=+crt-static -Cprofile-generate=$PWD/profraw"
+    mkdir -p profraw
     cargo build --frozen --release --bin ember --target ${target}
     runHook postBuild
   '';
 
   installPhase = ''
     runHook preInstall
-    mkdir -p "$out/bin"
-    cp "target/${target}/release/ember" "$out/bin/ember"
-
-    file "$out/bin/ember" | tee "$out/FILE.txt"
-    if readelf -l "$out/bin/ember" | grep -q 'INTERP'; then
-      echo "Linux release binary has a dynamic interpreter" >&2
+    printf 'bench depth 12\nbench depth 14\nquit\n' \
+      | ${emulator}target/${target}/release/ember >/dev/null
+    ${pkgs.llvmPackages.llvm}/bin/llvm-profdata merge \
+      -o merged.profdata profraw/*.profraw
+    test -s merged.profdata || {
+      echo "PGO profile merge produced no data" >&2
       exit 1
-    fi
-    if readelf -d "$out/bin/ember" 2>/dev/null | grep -q 'NEEDED'; then
-      echo "Linux release binary has dynamic library dependencies" >&2
-      exit 1
-    fi
+    }
+    mkdir -p "$out"
+    cp merged.profdata "$out/merged.profdata"
     runHook postInstall
   '';
 
@@ -90,14 +104,12 @@ rustPlatform.buildRustPackage {
   dontFixup = true;
 
   passthru = {
-    inherit arch target targetCpu;
-    allocator = if arch == "amd64" then "mimalloc" else "system";
-    linkage = "static-musl";
-    pgo = pgoProfile != null;
+    inherit arch target;
+    workload = "bench depth 12; bench depth 14";
   };
 
   meta = {
-    description = "Static Ember chess engine for Linux ${arch}";
+    description = "LLVM PGO profile for Ember ${arch} release builds";
     mainProgram = "ember";
   };
 }

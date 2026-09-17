@@ -233,26 +233,61 @@
       packages = forAllSystems (
         pkgs:
         let
+          # Per-arch LLVM PGO profiles. Linux profiles also serve the Windows
+          # and macOS consumers of the same architecture (function-level
+          # counters transfer across OS builds); macOS keeps its own profiles
+          # because it cannot run Linux binaries.
+          linuxPgoProfiles = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+            amd64 = import ./nix/ember-pgo-profile.nix {
+              inherit pkgs;
+              lib = pkgs.lib;
+              arch = "amd64";
+            };
+            arm64 = import ./nix/ember-pgo-profile.nix {
+              inherit pkgs;
+              lib = pkgs.lib;
+              arch = "arm64";
+            };
+          };
+          macosPgoProfiles = pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+            amd64 = import ./nix/macos-ember-pgo-profile.nix {
+              inherit nixpkgs pkgs rust-overlay;
+              lib = pkgs.lib;
+              arch = "amd64";
+            };
+            arm64 = import ./nix/macos-ember-pgo-profile.nix {
+              inherit nixpkgs pkgs rust-overlay;
+              lib = pkgs.lib;
+              arch = "arm64";
+            };
+          };
+          pgoProfiles = linuxPgoProfiles // macosPgoProfiles;
           windowsEmberAmd64 = import ./nix/windows-ember.nix {
             inherit pkgs;
             lib = pkgs.lib;
             arch = "amd64";
+            pgoProfile = pgoProfiles.amd64 or null;
           };
           windowsEmberArm64 = import ./nix/windows-ember.nix {
             inherit pkgs;
             lib = pkgs.lib;
             arch = "arm64";
+            pgoProfile = pgoProfiles.arm64 or null;
           };
           linuxReleasePackages = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+            ember-pgo-profile-amd64 = pgoProfiles.amd64;
+            ember-pgo-profile-arm64 = pgoProfiles.arm64;
             ember-linux-amd64 = import ./nix/linux-ember.nix {
               inherit pkgs;
               lib = pkgs.lib;
               arch = "amd64";
+              pgoProfile = pgoProfiles.amd64 or null;
             };
             ember-linux-arm64 = import ./nix/linux-ember.nix {
               inherit pkgs;
               lib = pkgs.lib;
               arch = "arm64";
+              pgoProfile = pgoProfiles.arm64 or null;
             };
             ember-windows-amd64 = windowsEmberAmd64.package;
             ember-windows-arm64 = windowsEmberArm64.package;
@@ -266,6 +301,7 @@
                 ;
               lib = pkgs.lib;
               arch = "amd64";
+              pgoProfile = pgoProfiles.amd64 or null;
             };
             ember-macos-arm64 = import ./nix/macos-ember.nix {
               inherit
@@ -275,6 +311,7 @@
                 ;
               lib = pkgs.lib;
               arch = "arm64";
+              pgoProfile = pgoProfiles.arm64 or null;
             };
           };
           existingLinuxPackages = pkgs.lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") (

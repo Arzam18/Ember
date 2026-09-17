@@ -317,6 +317,23 @@ jobs:
           cargo build --locked --release --bin ember
           --target x86_64-pc-windows-msvc
 
+      # PGO changes only compiler layout and inlining decisions; the script
+      # verifies the resulting binary reproduces the plain build's bench
+      # signatures exactly before anything else consumes it.
+      - name: Build PGO-optimized MSVC binary
+        shell: pwsh
+        run: |
+          rustup component add llvm-tools
+          python tools/build_pgo.py --target x86_64-pc-windows-msvc `
+            --rustflags "-C target-cpu=x86-64-v3 -C target-feature=+crt-static -C link-arg=/STACK:16777216" `
+            --cargo-args --bin ember
+
+      - name: Promote PGO binary into the build output path
+        shell: pwsh
+        run: |
+          Copy-Item target-pgo-use/x86_64-pc-windows-msvc/release/ember.exe `
+            target/x86_64-pc-windows-msvc/release/ember.exe -Force
+
       - name: Run native UCI smoke test
         shell: pwsh
         run: >

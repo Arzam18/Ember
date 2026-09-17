@@ -304,22 +304,27 @@ release NPS and search-shape comparison.
 
 ### PGO release builds
 
-Performance-relevant release binaries are built with profile-guided optimization
-(`tools/build_pgo.py`). PGO changes compiler layout and inlining decisions only, never
-program semantics, so it counts as a pure speedup: the PGO binary must reproduce the
-plain release binary's bench signature and node counts exactly, and it still needs the
-standard paired NPS comparison before adoption.
+All shipped binaries are built with profile-guided optimization. PGO changes compiler
+layout and inlining decisions only, never program semantics, so it counts as a pure
+speedup: every PGO binary must reproduce the plain build's bench signature and node
+counts exactly, and adoption still needs the standard paired NPS comparison.
 
-- Run `python tools/build_pgo.py` to instrument, collect, merge, rebuild, and verify in
-  one step. It requires `rustup component add llvm-tools`.
-- Keep the profile workload representative of real play: the default fixed-depth bench
-  run covers the standard positions; extend it when search or evaluation changes
-  materially, because inlining decisions shift with the code.
-- Profiles are local artifacts (`pgo-data/`, gitignored). Regenerate them after engine
-  changes rather than reusing stale profiles across refactors.
-- The Nix `ci` shell and CI builds remain plain (no PGO) and act as the portability and
-  correctness gate; wire profile generation into the Nix release packaging before
-  shipping PGO binaries from release tags.
+- Local Windows builds: `python tools/build_pgo.py` (instrumented build into
+  `target-pgo`, deterministic fixed-depth bench workload, `llvm-profdata` merge into
+  `pgo-data/merged.profdata`, rebuild with `-Cprofile-use` into `target-pgo-use`,
+  signature comparison against the plain binary). Requires
+  `rustup component add llvm-tools`. Profiles are local artifacts (`pgo-data/` is
+  gitignored); regenerate them after meaningful engine changes.
+- CI: the `windows-msvc` job builds its artifact through `tools/build_pgo.py`. The Nix
+  release packages build per-architecture profiles first
+  (`nix/ember-pgo-profile.nix` for Linux plus the Windows consumers, and
+  `nix/macos-ember-pgo-profile.nix` for macOS) and reuse the same-arch profile across
+  OS builds: PGO data is function-level counting over target-independent IR, so a
+  Linux-built profile serves the Windows build of the same architecture. Cross-arch
+  profiling runs the workload under QEMU user emulation or Rosetta; counters are exact
+  under emulation, only wall time grows.
+- The Nix `ci` shell, plain CI test builds, and the fixture-gate baseline stay plain
+  (no PGO) and act as the portability and correctness gate.
 - Verify with the paired-NPS workflow above on the same machine before and after.
 
 ### Elo and game comparisons
