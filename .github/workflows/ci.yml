@@ -326,7 +326,7 @@ jobs:
           rustup component add llvm-tools
           python tools/build_pgo.py --target x86_64-pc-windows-msvc `
             --rustflags "-C target-cpu=x86-64-v3 -C target-feature=+crt-static -C link-arg=/STACK:16777216" `
-            --cargo-args --bin ember
+            --cargo-args "--bin ember"
 
       - name: Promote PGO binary into the build output path
         shell: pwsh

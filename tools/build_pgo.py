@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import pathlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -101,16 +102,17 @@ def main() -> None:
     parser.add_argument("--rustflags", default=DEFAULT_RUSTFLAGS, help="base RUSTFLAGS, e.g. target-cpu")
     parser.add_argument("--target", default=None, help="optional cargo --target triple")
     parser.add_argument(
-        "--cargo-args", nargs="*", default=[],
-        help="extra cargo build args, e.g. --bin ember",
+        "--cargo-args", default="",
+        help='extra cargo build args as one quoted string, e.g. "--bin ember"',
     )
     args = parser.parse_args()
+    cargo_args = shlex.split(args.cargo_args)
 
     profdata_tool = find_llvm_profdata()
     PGO_DATA.mkdir(exist_ok=True)
 
     print("== step 1/5: instrumented build ==")
-    run_cargo(f"{args.rustflags} -Cprofile-generate={PGO_DATA.as_posix()}", INSTRUMENTED_DIR, args.cargo_args, args.target)
+    run_cargo(f"{args.rustflags} -Cprofile-generate={PGO_DATA.as_posix()}", INSTRUMENTED_DIR, cargo_args, args.target)
     instrumented = binary_path(INSTRUMENTED_DIR, args.target)
 
     print("== step 2/5: profile workload ==")
@@ -130,7 +132,7 @@ def main() -> None:
     print(f"  {MERGED_PROFILE} ({MERGED_PROFILE.stat().st_size / 1e6:.1f} MB)")
 
     print("== step 4/5: PGO build ==")
-    run_cargo(f"{args.rustflags} -Cprofile-use={MERGED_PROFILE.as_posix()}", OPTIMIZED_DIR, args.cargo_args, args.target)
+    run_cargo(f"{args.rustflags} -Cprofile-use={MERGED_PROFILE.as_posix()}", OPTIMIZED_DIR, cargo_args, args.target)
     optimized = binary_path(OPTIMIZED_DIR, args.target)
 
     print("== step 5/5: verify identical behavior ==")
