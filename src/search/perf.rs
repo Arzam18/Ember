@@ -46,6 +46,10 @@ pub(crate) struct PerfCounters {
 pub(crate) static THREAT_SCAN_CYCLES: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "search-perf")]
 pub(crate) static THREAT_SCAN_CALLS: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "search-perf")]
+pub(crate) static THREAT_SLOT_CYCLES: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "search-perf")]
+pub(crate) static THREAT_SLOT_CALLS: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(feature = "search-perf")]
 pub(crate) static ACC_COPY_CYCLES: AtomicU64 = AtomicU64::new(0);

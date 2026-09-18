@@ -445,11 +445,16 @@ fn remove_threat_row<B: EmberV2Backend>(
 }
 
 const THREAT_BITSET_WORDS: usize = THREAT_DIMS.div_ceil(64);
+const THREAT_SLOT_MIN_OCCUPANCY: u32 = 16;
 
 #[derive(Default)]
 pub(crate) struct EmberV2ThreatDiffScratch {
     old_bits: Vec<u64>,
     new_bits: Vec<u64>,
+    slot_rem: [Vec<u16>; 2],
+    slot_add: [Vec<u16>; 2],
+    slot_rem_bits: Vec<u64>,
+    slot_add_bits: Vec<u64>,
 }
 
 impl EmberV2ThreatDiffScratch {
@@ -457,6 +462,10 @@ impl EmberV2ThreatDiffScratch {
         Self {
             old_bits: vec![0; THREAT_BITSET_WORDS * 2],
             new_bits: vec![0; THREAT_BITSET_WORDS * 2],
+            slot_rem: [Vec::with_capacity(64), Vec::with_capacity(64)],
+            slot_add: [Vec::with_capacity(64), Vec::with_capacity(64)],
+            slot_rem_bits: vec![0; THREAT_BITSET_WORDS * 2],
+            slot_add_bits: vec![0; THREAT_BITSET_WORDS * 2],
         }
     }
 }
@@ -516,6 +525,310 @@ fn diff_threat_rows<B: EmberV2Backend>(
         new_bits[(index >> 6) as usize] &= !(1u64 << (index & 63));
     }
     ops
+}
+
+#[inline(always)]
+fn slider_matches_direction(piece: u32, straight: bool) -> bool {
+    let piece_type = piece % 6;
+    if straight {
+        piece_type == 3 || piece_type == 4
+    } else {
+        piece_type == 2 || piece_type == 4
+    }
+}
+
+fn threat_targets_of_slot(occupancy: u64, all_pawns: u64, piece: u32, from: u32) -> u64 {
+    let piece_type = piece % 6;
+    if piece_type == 0 {
+        let color = piece / 6;
+        let mut targets = pawn_attacks_bb(color, from) & occupancy;
+        if let Some(forward) = pawn_forward_square(color, from) {
+            if all_pawns & (1u64 << forward) != 0 {
+                targets |= 1u64 << forward;
+            }
+        }
+        targets
+    } else {
+        attacks_bb(piece_type, from, occupancy) & occupancy
+    }
+}
+
+static RAY_MASK: [[u64; 8]; 64] = {
+    let mut table = [[0u64; 8]; 64];
+    let mut square = 0usize;
+    while square < 64 {
+        let rank = square / 8;
+        let file = square % 8;
+        let mut step = 1usize;
+        while step <= 7 {
+            if rank >= step {
+                table[square][0] |= 1u64 << ((rank - step) * 8 + file);
+            }
+            if rank + step <= 7 {
+                table[square][1] |= 1u64 << ((rank + step) * 8 + file);
+            }
+            if file >= step {
+                table[square][2] |= 1u64 << (rank * 8 + (file - step));
+            }
+            if file + step <= 7 {
+                table[square][3] |= 1u64 << (rank * 8 + (file + step));
+            }
+            if rank >= step && file >= step {
+                table[square][4] |= 1u64 << ((rank - step) * 8 + (file - step));
+            }
+            if rank + step <= 7 && file + step <= 7 {
+                table[square][5] |= 1u64 << ((rank + step) * 8 + (file + step));
+            }
+            if rank >= step && file + step <= 7 {
+                table[square][6] |= 1u64 << ((rank - step) * 8 + (file + step));
+            }
+            if rank + step <= 7 && file >= step {
+                table[square][7] |= 1u64 << ((rank + step) * 8 + (file - step));
+            }
+            step += 1;
+        }
+        square += 1;
+    }
+    table
+};
+
+#[allow(clippy::too_many_arguments)]
+fn apply_incremental_threat_update<B: EmberV2Backend>(
+    accumulator: &mut EmberV2Accumulator,
+    parent: &EmberV2Accumulator,
+    net: &EmberV2Data,
+    before: &BoardState,
+    after: &BoardState,
+    king_squares: [u32; 2],
+    mut new_lists: [&mut Vec<u16>; 2],
+    scratch: &mut EmberV2ThreatDiffScratch,
+) -> usize {
+    let occupancy_before = before.bb.iter().copied().fold(0u64, |all, bb| all | bb);
+    let occupancy_after = after.bb.iter().copied().fold(0u64, |all, bb| all | bb);
+    let pawns_before = before.bb[0] | before.bb[6];
+    let pawns_after = after.bb[0] | after.bb[6];
+
+    let rem = &mut scratch.slot_rem;
+    let add = &mut scratch.slot_add;
+    rem[0].clear();
+    rem[1].clear();
+    add[0].clear();
+    add[1].clear();
+
+    macro_rules! push_pair {
+        ($is_removal:expr, $piece:expr, $from:expr, $to:expr, $victim:expr) => {{
+            let victim_index = $victim;
+            for side in 0..2usize {
+                let index = threat_lut().make_index(
+                    side as u32,
+                    $piece,
+                    $from,
+                    $to,
+                    victim_index,
+                    king_squares[side],
+                );
+                if index < THREAT_DIMS {
+                    let bit = 1u64 << (index & 63);
+                    let word = side * THREAT_BITSET_WORDS + (index >> 6) as usize;
+                    let bits = if $is_removal {
+                        &mut scratch.slot_rem_bits
+                    } else {
+                        &mut scratch.slot_add_bits
+                    };
+                    if bits[word] & bit == 0 {
+                        bits[word] |= bit;
+                        if $is_removal {
+                            rem[side].push(index as u16);
+                        } else {
+                            add[side].push(index as u16);
+                        }
+                    }
+                }
+            }
+        }};
+    }
+
+    let mut changed = 0u64;
+    for (before_pieces, after_pieces) in before.bb.iter().zip(after.bb.iter()) {
+        changed |= before_pieces ^ after_pieces;
+    }
+    while changed != 0 {
+        let square = changed.trailing_zeros();
+        changed &= changed - 1;
+        let ray_masks = &RAY_MASK[square as usize];
+        for (state, occupancy, _all_pawns, is_removal) in [
+            (before, occupancy_before, pawns_before, true),
+            (after, occupancy_after, pawns_after, false),
+        ] {
+            let square_bit = 1u64 << square;
+            let x_occupied = occupancy & square_bit != 0;
+            let victim_here = u32::from(state.mailbox[square as usize]);
+            let blockers = attacks_bb(4, square, occupancy & !square_bit) & occupancy;
+            for line in 0..4usize {
+                let straight = line < 2;
+                let ray_a = blockers & ray_masks[line * 2];
+                let ray_b = blockers & ray_masks[line * 2 + 1];
+                if x_occupied {
+                    for ray in [ray_a, ray_b] {
+                        if ray == 0 {
+                            continue;
+                        }
+                        let from = ray.trailing_zeros();
+                        let piece = u32::from(state.mailbox[from as usize]);
+                        if slider_matches_direction(piece, straight) {
+                            push_pair!(is_removal, piece, from, square, victim_here);
+                        }
+                    }
+                } else if ray_a != 0 && ray_b != 0 {
+                    let from_a = ray_a.trailing_zeros();
+                    let from_b = ray_b.trailing_zeros();
+                    let piece_a = u32::from(state.mailbox[from_a as usize]);
+                    let piece_b = u32::from(state.mailbox[from_b as usize]);
+                    if slider_matches_direction(piece_a, straight) {
+                        push_pair!(is_removal, piece_a, from_a, from_b, piece_b);
+                    }
+                    if slider_matches_direction(piece_b, straight) {
+                        push_pair!(is_removal, piece_b, from_b, from_a, piece_a);
+                    }
+                }
+            }
+
+            if !x_occupied {
+                continue;
+            }
+            let knight_planes = state.bb[1] | state.bb[7];
+            let mut knights = crate::board::KNIGHT_ATTACKS[square as usize] & knight_planes;
+            while knights != 0 {
+                let from = knights.trailing_zeros();
+                knights &= knights - 1;
+                push_pair!(
+                    is_removal,
+                    u32::from(state.mailbox[from as usize]),
+                    from,
+                    square,
+                    victim_here
+                );
+            }
+            let mut white_pawns = pawn_attacks_bb(1, square) & state.bb[0];
+            while white_pawns != 0 {
+                let from = white_pawns.trailing_zeros();
+                white_pawns &= white_pawns - 1;
+                push_pair!(is_removal, 0, from, square, victim_here);
+            }
+            let mut black_pawns = pawn_attacks_bb(0, square) & state.bb[6];
+            while black_pawns != 0 {
+                let from = black_pawns.trailing_zeros();
+                black_pawns &= black_pawns - 1;
+                push_pair!(is_removal, 6, from, square, victim_here);
+            }
+            if victim_here % 6 == 0 {
+                if square < 56 && state.bb[0] & (1u64 << (square + 8)) != 0 {
+                    push_pair!(is_removal, 0, square + 8, square, victim_here);
+                }
+                if square >= 8 && state.bb[6] & (1u64 << (square - 8)) != 0 {
+                    push_pair!(is_removal, 6, square - 8, square, victim_here);
+                }
+            }
+        }
+    }
+
+    for plane in 0..12usize {
+        let moved = before.bb[plane] ^ after.bb[plane];
+        if moved == 0 {
+            continue;
+        }
+        let mut candidates = moved;
+        while candidates != 0 {
+            let from = candidates.trailing_zeros();
+            candidates &= candidates - 1;
+            let had = before.bb[plane] & (1u64 << from) != 0;
+            let has = after.bb[plane] & (1u64 << from) != 0;
+            let piece_before = u32::from(before.mailbox[from as usize]);
+            let piece_after = u32::from(after.mailbox[from as usize]);
+            let old_targets = if had {
+                threat_targets_of_slot(occupancy_before, pawns_before, piece_before, from)
+            } else {
+                0
+            };
+            let new_targets = if has {
+                threat_targets_of_slot(occupancy_after, pawns_after, piece_after, from)
+            } else {
+                0
+            };
+            let mut union = old_targets | new_targets;
+            while union != 0 {
+                let to = union.trailing_zeros();
+                union &= union - 1;
+                let mask = 1u64 << to;
+                let in_old = old_targets & mask != 0;
+                let in_new = new_targets & mask != 0;
+                if in_old && in_new && piece_at(before, to) == piece_at(after, to) {
+                    continue;
+                }
+                if in_old {
+                    push_pair!(true, piece_before, from, to, piece_at(before, to));
+                }
+                if in_new {
+                    push_pair!(false, piece_after, from, to, piece_at(after, to));
+                }
+            }
+        }
+    }
+
+    let mut total_rows = 0usize;
+    for side in 0..2usize {
+        let word_base = side * THREAT_BITSET_WORDS;
+
+        for &index in &rem[side] {
+            let index = index as usize;
+            remove_threat_row::<B>(
+                &mut accumulator.accumulation[side],
+                &mut accumulator.psqt[side],
+                &net.threat_weights[index * HIDDEN_SIZE..(index + 1) * HIDDEN_SIZE],
+                &net.threat_psqt[index * PSQT_BUCKETS..(index + 1) * PSQT_BUCKETS],
+            );
+        }
+
+        let list = &mut new_lists[side];
+        list.clear();
+        let mut removed_seen = 0usize;
+        for &index in &parent.threat_indices[side] {
+            let word = word_base + (index >> 6) as usize;
+            let bit = 1u64 << (index & 63);
+            if scratch.slot_rem_bits[word] & bit == 0 {
+                list.push(index);
+            } else {
+                removed_seen += 1;
+            }
+        }
+        debug_assert_eq!(removed_seen, rem[side].len(), "stale threat list state");
+        debug_assert!(
+            add[side]
+                .iter()
+                .all(|index| !parent.threat_indices[side].contains(index)),
+            "incremental threat add already active in the parent list"
+        );
+        list.extend_from_slice(&add[side]);
+
+        for &index in &add[side] {
+            let index = index as usize;
+            add_threat_row::<B>(
+                &mut accumulator.accumulation[side],
+                &mut accumulator.psqt[side],
+                &net.threat_weights[index * HIDDEN_SIZE..(index + 1) * HIDDEN_SIZE],
+                &net.threat_psqt[index * PSQT_BUCKETS..(index + 1) * PSQT_BUCKETS],
+            );
+        }
+
+        for &index in &rem[side] {
+            scratch.slot_rem_bits[word_base + (index >> 6) as usize] &= !(1u64 << (index & 63));
+        }
+        for &index in &add[side] {
+            scratch.slot_add_bits[word_base + (index >> 6) as usize] &= !(1u64 << (index & 63));
+        }
+        total_rows += rem[side].len() + add[side].len();
+    }
+    total_rows
 }
 
 #[derive(Clone)]
@@ -627,20 +940,111 @@ impl EmberV2Accumulator {
             std::mem::take(&mut self.threat_indices[1]),
         ];
         let [list_white, list_black] = &mut threat_lists;
-        collect_active_threat_indices_both(after, [list_white, list_black]);
-        #[cfg(feature = "search-perf")]
-        let __perf_t1 = crate::search::perf::rdtsc();
 
         let mut changed_squares = 0u64;
         for (before_pieces, after_pieces) in before.bb.iter().zip(after.bb.iter()) {
             changed_squares |= before_pieces ^ after_pieces;
         }
 
-        #[cfg(feature = "search-perf")]
+        #[cfg_attr(not(feature = "search-perf"), allow(unused_assignments))]
         let mut threat_row_ops = 0usize;
+        let kings_before = [find_king(before, 0), find_king(before, 1)];
+        let kings_after = [find_king(after, 0), find_king(after, 1)];
+        let occupancy_before = before
+            .bb
+            .iter()
+            .copied()
+            .fold(0u64, |all, bb| all | bb)
+            .count_ones();
+        if kings_before == kings_after && occupancy_before >= THREAT_SLOT_MIN_OCCUPANCY {
+            #[cfg(feature = "search-perf")]
+            let __perf_t_slot = crate::search::perf::rdtsc();
+            threat_row_ops += apply_incremental_threat_update::<B>(
+                self,
+                parent,
+                net,
+                before,
+                after,
+                kings_after,
+                [list_white, list_black],
+                scratch,
+            );
+            #[cfg(feature = "search-perf")]
+            {
+                let __perf_dt = crate::search::perf::rdtsc().wrapping_sub(__perf_t_slot);
+                crate::search::perf::THREAT_SLOT_CYCLES
+                    .fetch_add(__perf_dt, std::sync::atomic::Ordering::Relaxed);
+                crate::search::perf::THREAT_SLOT_CALLS
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            for perspective in 0..2u32 {
+                #[cfg(feature = "search-perf")]
+                let __perf_t_diff = crate::search::perf::rdtsc();
+                let side = perspective as usize;
+                let king_square = kings_after[side];
+                let mut squares = changed_squares;
+                while squares != 0 {
+                    let square = squares.trailing_zeros();
+                    squares &= squares - 1;
+                    let before_piece = before.mailbox[square as usize];
+                    let after_piece = after.mailbox[square as usize];
+                    if before_piece == after_piece {
+                        continue;
+                    }
+                    #[cfg(feature = "search-perf")]
+                    crate::search::perf::ACC_PIECE_ROWS
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if before_piece != EMPTY_SQ {
+                        let index =
+                            halfka_index(perspective, square, u32::from(before_piece), king_square);
+                        remove_psq_row::<B>(
+                            &mut self.accumulation[side],
+                            &mut self.psqt[side],
+                            &net.psq_weights[index * HIDDEN_SIZE..(index + 1) * HIDDEN_SIZE],
+                            &net.psqt[index * PSQT_BUCKETS..(index + 1) * PSQT_BUCKETS],
+                        );
+                    }
+                    if after_piece != EMPTY_SQ {
+                        let index =
+                            halfka_index(perspective, square, u32::from(after_piece), king_square);
+                        add_psq_row::<B>(
+                            &mut self.accumulation[side],
+                            &mut self.psqt[side],
+                            &net.psq_weights[index * HIDDEN_SIZE..(index + 1) * HIDDEN_SIZE],
+                            &net.psqt[index * PSQT_BUCKETS..(index + 1) * PSQT_BUCKETS],
+                        );
+                    }
+                }
+                #[cfg(feature = "search-perf")]
+                {
+                    let __perf_dt = crate::search::perf::rdtsc().wrapping_sub(__perf_t_diff);
+                    crate::search::perf::ACC_DIFF_CYCLES
+                        .fetch_add(__perf_dt, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            self.threat_indices = threat_lists;
+            #[cfg(feature = "search-perf")]
+            {
+                crate::search::perf::ACC_THREAT_ROWS
+                    .fetch_add(threat_row_ops as u64, std::sync::atomic::Ordering::Relaxed);
+                let __perf_dt = crate::search::perf::rdtsc().wrapping_sub(__perf_t0);
+                crate::search::perf::ACC_THREATDIFF_CYCLES
+                    .fetch_add(__perf_dt, std::sync::atomic::Ordering::Relaxed);
+            }
+            #[cfg(not(feature = "search-perf"))]
+            {
+                let _ = threat_row_ops;
+            }
+            return;
+        }
+
+        collect_active_threat_indices_both(after, [list_white, list_black]);
+        #[cfg(feature = "search-perf")]
+        let __perf_t1 = crate::search::perf::rdtsc();
+
         for perspective in 0..2u32 {
             let side = perspective as usize;
-            if find_king(before, perspective) != find_king(after, perspective) {
+            if kings_before[perspective as usize] != kings_after[perspective as usize] {
                 #[cfg(feature = "search-perf")]
                 let __perf_t_rebuild = crate::search::perf::rdtsc();
                 self.rebuild_perspective::<B>(net, after, perspective, &threat_lists[side]);
@@ -655,7 +1059,7 @@ impl EmberV2Accumulator {
                 continue;
             }
 
-            let king_square = find_king(after, perspective);
+            let king_square = kings_after[perspective as usize];
             #[cfg(feature = "search-perf")]
             let __perf_t_diff = crate::search::perf::rdtsc();
             let mut squares = changed_squares;
@@ -1547,7 +1951,13 @@ mod tests {
         refreshed.refresh_with_backend::<B>(net, after);
         assert_eq!(incremental.accumulation, refreshed.accumulation);
         assert_eq!(incremental.psqt, refreshed.psqt);
-        assert_eq!(incremental.threat_indices, refreshed.threat_indices);
+        let mut incremental_sorted = incremental.threat_indices.clone();
+        let mut refreshed_sorted = refreshed.threat_indices.clone();
+        for side in 0..2 {
+            incremental_sorted[side].sort_unstable();
+            refreshed_sorted[side].sort_unstable();
+        }
+        assert_eq!(incremental_sorted, refreshed_sorted);
     }
 
     #[test]
