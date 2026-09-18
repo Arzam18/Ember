@@ -35,8 +35,8 @@ The existing Elo runner is the best starting point:
 The main engine hooks are:
 
 - `src/main.rs`: UCI parsing, especially `position` and `go`.
-- `src/engine.rs`: root move selection in `Engine::find_best_move`.
-- `src/search.rs`: likely root-cause surface for search behavior, including
+- `src/engine/`: root move selection in `Engine::find_best_move`.
+- `src/search/`: likely root-cause surface for search behavior, including
   TT use, qsearch, null move pruning, futility pruning, LMP, SEE pruning, LMR,
   aspiration windows, history/counter moves, and correction history.
 - `src/book.rs`: book move selection currently uses wall-clock time, so book
