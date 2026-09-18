@@ -301,6 +301,11 @@ def main():
     parser.add_argument("--hash-mb", type=int, default=64)
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--interleave",
+        action="store_true",
+        help="Alternate binaries per (repeat, position) sample so drifting machine load affects all sides equally.",
+    )
     parser.add_argument("--positions", default=None, help="Optional JSON file with [{label, position}] entries.")
     parser.add_argument(
         "--option",
@@ -365,27 +370,62 @@ def main():
             "bytes": resolved.stat().st_size,
             "sha256": sha256_file(resolved),
         })
-        print(f"benchmarking {label} ({resolved})...", flush=True)
+
+    result["summaries"] = {label: {} for label in labels}
+    if args.interleave:
+        schedule = []
         for repeat in range(1, args.repeats + 1):
-            for position in positions:
-                sample = bench_once(
-                    resolved,
-                    position,
-                    args.depth,
-                    args.hash_mb,
-                    args.threads,
-                    args.timeout,
-                    not args.keep_book,
-                    options[label],
-                )
-                sample["label"] = label
-                sample["repeat"] = repeat
-                result["samples"].append(sample)
-                print(
-                    f"{label} repeat={repeat} {sample['position']} "
-                    f"depth={sample['reported_depth']} nps={sample['nps']}",
-                    flush=True,
-                )
+            for pos_index, position in enumerate(positions):
+                order = list(args.binary)
+                if (repeat + pos_index) % 2 == 0:
+                    order.reverse()
+                for label, path in order:
+                    schedule.append((label, path, position, repeat))
+        for label, path, position, repeat in schedule:
+            sample = bench_once(
+                path.resolve(),
+                position,
+                args.depth,
+                args.hash_mb,
+                args.threads,
+                args.timeout,
+                not args.keep_book,
+                options[label],
+            )
+            sample["label"] = label
+            sample["repeat"] = repeat
+            result["samples"].append(sample)
+            print(
+                f"{label} repeat={repeat} {sample['position']} "
+                f"depth={sample['reported_depth']} nps={sample['nps']}",
+                flush=True,
+            )
+    else:
+        for label, path in args.binary:
+            resolved = path.resolve()
+            print(f"benchmarking {label} ({resolved})...", flush=True)
+            for repeat in range(1, args.repeats + 1):
+                for position in positions:
+                    sample = bench_once(
+                        resolved,
+                        position,
+                        args.depth,
+                        args.hash_mb,
+                        args.threads,
+                        args.timeout,
+                        not args.keep_book,
+                        options[label],
+                    )
+                    sample["label"] = label
+                    sample["repeat"] = repeat
+                    result["samples"].append(sample)
+                    print(
+                        f"{label} repeat={repeat} {sample['position']} "
+                        f"depth={sample['reported_depth']} nps={sample['nps']}",
+                        flush=True,
+                    )
+
+    for label, _ in args.binary:
         result["summaries"][label] = summarize([row for row in result["samples"] if row["label"] == label])
 
     (out_dir / "result.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
