@@ -238,7 +238,12 @@ When adding a foreign NNUE architecture, first require exact integer-score parit
 compatible reference engine on varied positions. Separately test that static evaluation,
 the main search, and SMP workers select that network instead of silently falling back to a
 native network or classic evaluation. Benchmark the incremental feature update path; a
-correct full-refresh evaluator is an oracle, not a production search implementation.
+correct full-refresh evaluator is an oracle, not a production search implementation. When
+several bit-exact implementations of the same accumulator update exist (full scan versus
+incremental delta), per-node dispatch between them on a measured cost crossover is safe
+because the accumulator state is identical either way, but the parity test must then walk
+both dispatch sides along the same game sequences so every node class stays cross-validated
+against the oracle.
 
 When adding a special search ordering or extension, test both the intended motif and nearby
 counterexamples that must not qualify. Prefer predicates that describe the candidate move
@@ -266,6 +271,19 @@ relevant ones; do not use one as a proxy for another.
   new experiment.
 - Warm up before timing and use multiple repetitions. Prefer medians and distributions over
   a single sample.
+- When machine load can drift over minutes (desktop workload, background services), run the
+  sides interleaved rather than sequentially: `tools/benchmark_search.py --interleave`
+  alternates binaries per (repeat, position) sample and swaps which side goes first per
+  block. Sequential scheduling measured the same engine pair as +21.9%, +5.1%, and -26.8%
+  across three runs under a drifting desktop load; the interleaved schedule collapsed the
+  spread to a stable estimate. Node counts are bit-exact between runs, so any NPS spread
+  under identical trees is machine load, not engine behavior.
+- On workstation CPUs, phase-cycle counters (per-node rdtsc regions) detect a code-level
+  cost shift far more reliably than wall-clock NPS when the machine is not dedicated:
+  counters are load-independent, and a genuinely cheaper path shows as attributed cycles
+  shrinking. Watch the counter's "unattributed" bucket, though: layout and cache side
+  effects can push part of the savings there, so pair counter deltas with at least one
+  idle-machine NPS run before reporting a final number.
 - Save the complete result directory, not just a summary copied into chat or a PR.
 
 ### NPS and search shape
