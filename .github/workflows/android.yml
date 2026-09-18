@@ -1,0 +1,36 @@
+name: Build Ember for Android (ARM64)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-android-arm64:
+    name: Build Android ARM64 Binary
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust (Nightly)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build Android ARM64 Executable
+        run: |
+          cargo ndk -t arm64-v8a -o ./dist build --release --bin ember
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ember-android-arm64
+          path: dist/arm64-v8a/
