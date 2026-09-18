@@ -433,8 +433,9 @@ already incorporated.
 ## Release versioning
 
 - Treat the `[package].version` in `Cargo.toml` as the canonical Ember version. Keep
-  `Cargo.lock`, the UCI `id name Ember <version>` response, and user-visible packaging
-  metadata synchronized with it.
+  `Cargo.lock` and user-visible packaging metadata synchronized with it. The UCI
+  `id name Ember <version>` response is derived from the package version at compile time
+  and needs no separate bump.
 - Bump and verify every version-bearing location before creating a release tag. Build the
   release candidate from that exact commit and check its UCI handshake before tagging. Never
   tag first and apply the version bump afterward; the tagged source archive and attached

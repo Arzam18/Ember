@@ -29,6 +29,7 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 const MIN_HASH_MB: usize = 1;
 const MAX_HASH_MB: usize = 4096;
+const UCI_ID_NAME: &str = concat!("id name Ember ", env!("CARGO_PKG_VERSION"));
 const MIN_THREADS: usize = 1;
 const MAX_THREADS: usize = 256;
 const MAX_MULTI_PV: usize = 256;
@@ -260,7 +261,7 @@ fn run_uci_loop() {
 
         match parts[0] {
             "uci" => {
-                println!("id name Ember 1.3.0");
+                println!("{UCI_ID_NAME}");
                 println!("id author ExxDreamerCode");
                 println!(
                     "option name Hash type spin default 256 min {} max {}",
