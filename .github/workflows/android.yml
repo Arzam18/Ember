@@ -19,21 +19,23 @@ jobs:
 
       - name: Set up Rust (Nightly)
         uses: dtolnay/rust-toolchain@nightly
-
-      - name: Add Android ARM64 Target
-        run: |
-          rustup target add aarch64-linux-android
-          rustup default nightly
+        with:
+          targets: aarch64-linux-android
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk
 
       - name: Build Android ARM64 Executable
         run: |
-          cargo ndk -t arm64-v8a -o ./dist build --release --bin ember
+          cargo ndk -t arm64-v8a build --release --bin ember
+
+      - name: Stage Artifact
+        run: |
+          mkdir -p dist
+          cp target/aarch64-linux-android/release/ember dist/ember-android-arm64
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ember-android-arm64
-          path: dist/arm64-v8a/
+          path: dist/ember-android-arm64
