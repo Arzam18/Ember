@@ -957,6 +957,20 @@ impl EmberV2Accumulator {
             .fold(0u64, |all, bb| all | bb)
             .count_ones();
         if kings_before == kings_after && occupancy_before >= THREAT_SLOT_MIN_OCCUPANCY {
+            if parent.threat_indices[0].is_empty() && parent.threat_indices[1].is_empty() {
+                self.refresh_with_backend::<B>(net, after);
+                #[cfg(feature = "search-perf")]
+                {
+                    let __perf_dt = crate::search::perf::rdtsc().wrapping_sub(__perf_t0);
+                    crate::search::perf::ACC_THREATDIFF_CYCLES
+                        .fetch_add(__perf_dt, std::sync::atomic::Ordering::Relaxed);
+                }
+                #[cfg(not(feature = "search-perf"))]
+                {
+                    let _ = threat_row_ops;
+                }
+                return;
+            }
             #[cfg(feature = "search-perf")]
             let __perf_t_slot = crate::search::perf::rdtsc();
             threat_row_ops += apply_incremental_threat_update::<B>(
