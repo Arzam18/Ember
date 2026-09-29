@@ -51,6 +51,8 @@ echo -e "uci\nisready\nquit" | cargo run --release
 | `Hash`      | spin   | 256          | 1–4096   | Размер TT в мегабайтах            |
 | `Threads`   | spin   | 1            | 1-256        | Количество потоков     |
 | `MultiPV`   | spin   | 1            | 1-256        | Количество корневых ходов, анализируемых и выдаваемых независимо на каждой глубине |
+| `Move Overhead` | spin | 7 | 0-5000 | Резерв миллисекунд на ход для задержек GUI и протокола при переводе часов в бюджет поиска |
+| `Ponder`    | check  | false        | —        | Разрешить GUI включать пондеринг через `go ponder` и `ponderhit` |
 | `OwnBook`   | check  | false        | —        | Разрешить движку пользоваться собственной дебютной книгой; при false ходы из книги даёт GUI |
 | `Book`      | string | `<embedded>` | —        | Путь к дебютной книге .bin, используемой при включённом `OwnBook`; пустое значение отключает книгу |
 | `RandomBookMove` | check | false | — | Равновероятно выбирать среди надёжных ходов из книги в пределах 5 сантипешек от лучшей статической оценки |
@@ -58,10 +60,16 @@ echo -e "uci\nisready\nquit" | cargo run --release
 | `BookMinMoveWeightPermille` | spin | 10 | 0-1000 | Минимальная доля веса хода в промилле |
 | `NNUE`      | string | `<embedded>` | —        | Путь к файлу нейросети .nnue      |
 | `NNUEBackend` | combo | `auto` | `auto`, доступные backend-ы | Backend для NNUE-поиска Ember V1/V2 |
-| `TraceFile` | string | `<empty>`    | —        | Путь к TraceBack файлу .jsonl     |
+| `TraceFile` | string | `<empty>`    | —        | Путь к TraceBack файлу .jsonl; опция присутствует только в сборках с фичей `decision-trace` |
 | `SyzygyPath` | string | `<empty>` | — | Путь к папке с Syzygy таблицами (DTZ) |
 | `UCI_Chess960` | check | `false`    | —        | Включение/отключение Chess 960     |
 | `Tune` | string | `<empty>` | — | Оверрайды тюнингуемых констант поиска на лету (см. [docs/auto-tuning.md](auto-tuning.md)) |
+
+Опция `TraceFile` компилируется только с Cargo-фичей `decision-trace`, которой нет в
+наборе по умолчанию, поэтому в релизных сборках её в списке опций нет. Включается так:
+`cargo build --release --features decision-trace` (или
+`nix run .#windows-release -- --features decision-trace` для Windows-сборки с трассировкой,
+см. [BUILD.md](../BUILD.md)). Все остальные опции выше доступны в любой сборке.
 
 ### Syzygy через Nix
 
@@ -232,7 +240,8 @@ info string Loaded NNUE v6 my-net.nnue SCReLU (FT=1024 L1=0 L2=0)
 setoption name Hash value 256
 setoption name OwnBook value true
 setoption name Book value book.bin
-setoption option name TraceFile value Trace.jsonl
+setoption name Move Overhead value 20
+setoption name TraceFile value Trace.jsonl   # только в сборке с decision-trace
 ```
 
 Движок также понимает встроенную UCI-команду `bench`: поиск на фиксированную глубину по

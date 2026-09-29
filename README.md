@@ -52,6 +52,8 @@ echo -e "uci\nisready\nquit" | cargo run --release
 | `Hash` | spin | 256 | 1–4096 | Transposition table size in megabytes |
 | `Threads` | spin | 1 | 1–256 | Number of search threads |
 | `MultiPV` | spin | 1 | 1–256 | Number of root moves analyzed and reported independently per depth |
+| `Move Overhead` | spin | 7 | 0–5000 | Milliseconds reserved per move for GUI and protocol latency when the clock is converted into a search budget |
+| `Ponder` | check | false | — | Let the GUI enable pondering with `go ponder` and `ponderhit` |
 | `OwnBook` | check | false | — | Let the engine use its own opening book; when false the GUI provides book moves |
 | `Book` | string | `<embedded>` | — | Path to a `.bin` opening book used when `OwnBook` is enabled; an empty value disables the book |
 | `RandomBookMove` | check | false | — | Pick uniformly among safe book moves within 5 centipawns of the best static evaluation |
@@ -59,10 +61,16 @@ echo -e "uci\nisready\nquit" | cargo run --release
 | `BookMinMoveWeightPermille` | spin | 10 | 0–1000 | Minimum move weight share in permille |
 | `NNUE` | string | `<embedded>` | — | Path to an `.nnue` network file |
 | `NNUEBackend` | combo | `auto` | `auto`, available backends | Backend used for Ember V1/V2 NNUE search |
-| `TraceFile` | string | `<empty>` | — | Path to a `.jsonl` traceback file |
+| `TraceFile` | string | `<empty>` | — | Path to a `.jsonl` traceback file; advertised only by builds with the `decision-trace` feature |
 | `SyzygyPath` | string | `<empty>` | — | Path to a Syzygy tablebase directory with DTZ files |
 | `UCI_Chess960` | check | `false` | — | Enable or disable Chess960 |
 | `Tune` | string | `<empty>` | — | Runtime overrides for tunable search constants (see [docs/auto-tuning.md](docs/auto-tuning.md)) |
+
+`TraceFile` is compiled in only with the `decision-trace` Cargo feature, which the default
+feature set does not include, so the packaged release binaries do not list it. Opt in with
+`cargo build --release --features decision-trace` (or
+`nix run .#windows-release -- --features decision-trace` for a traced Windows build, see
+[BUILD.md](BUILD.md)). Every other option above is available in all builds.
 
 ### Syzygy through Nix
 
@@ -220,7 +228,8 @@ Engine parameters are changed through the UCI `setoption` command:
 setoption name Hash value 256
 setoption name OwnBook value true
 setoption name Book value book.bin
-setoption name TraceFile value Trace.jsonl
+setoption name Move Overhead value 20
+setoption name TraceFile value Trace.jsonl   # decision-trace builds only
 ```
 
 The engine also understands the built-in UCI `bench` command: a fixed-depth search over a
