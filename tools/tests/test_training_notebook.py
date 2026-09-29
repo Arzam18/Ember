@@ -90,7 +90,7 @@ class TrainingNotebookTests(unittest.TestCase):
                     source,
                 )
 
-    def test_fine_tuning_download_is_resumable_and_verified(self):
+    def test_fine_tuning_download_is_resumable_and_size_checked(self):
         for notebook, cells in self.fine_tune_notebooks.items():
             with self.subTest(notebook=notebook):
                 source = cells["cadfc528"]
@@ -98,17 +98,15 @@ class TrainingNotebookTests(unittest.TestCase):
                 self.assertTrue(source.startswith("%%bash\nset -euo pipefail\n"))
                 self.assertIn("--fail --location --continue-at -", source)
                 self.assertIn("EXPECTED_SIZE=20144023865", source)
-                self.assertIn(
-                    "cebf6e5aa62a0df447f3748c90a542ded13105c873a1a819d7f71bdf041ca8cb",
-                    source,
-                )
-                self.assertIn("sha256sum --check", source)
+                self.assertNotIn("sha256sum", source)
+                self.assertNotIn("EXPECTED_SHA256", source)
                 self.assertIn('PART="${DATASET}.part"', source)
                 self.assertIn(
                     'if [ "$PART_SIZE" -lt "$EXPECTED_SIZE" ]; then', source
                 )
                 self.assertLess(
-                    source.index("sha256sum --check"), source.rindex('mv "$PART"')
+                    source.index('test "$(stat -c %s "$PART")" -eq "$EXPECTED_SIZE"'),
+                    source.index('mv "$PART"'),
                 )
 
     def test_fine_tuning_binds_the_base_and_additional_epochs(self):
@@ -119,10 +117,12 @@ class TrainingNotebookTests(unittest.TestCase):
                 ast.parse(source)
 
                 self.assertIn("BASE_CHECKPOINT", config)
-                self.assertIn("BASE_CHECKPOINT_SHA256", config)
+                self.assertNotIn("SHA256", config)
                 self.assertIn("RESUME_CHECKPOINT", config)
                 self.assertIn("ADDITIONAL_EPOCHS", config)
                 self.assertNotIn("MAX_EPOCHS", config)
+                self.assertNotIn("require_sha256", source)
+                self.assertNotIn("sha256_file", source)
                 self.assertIn(
                     "derive_target_max_epochs(base_epoch, additional_epochs)",
                     source,
@@ -156,7 +156,7 @@ class TrainingNotebookTests(unittest.TestCase):
                 self.assertIn("f'{RUN_NAME}-smoke' if smoke else RUN_NAME", source)
                 self.assertIn("fine-tune-manifest.json", source)
                 self.assertIn("active-launch.json", source)
-                self.assertIn("resume_checkpoint_sha256", source)
+                self.assertIn("'resume_checkpoint': str(resume)", source)
                 self.assertIn("atomic_write_json", source)
                 self.assertIn("existing run checkpoints require", source)
 
