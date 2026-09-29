@@ -110,8 +110,6 @@ The rough cost of precision below is estimated for an 8-core CPU where automatic
 | ±7.5 Elo | 15 Elo | ~8,250 | ~6–9 h |
 | ±5 Elo | 10 Elo | ~18,550 | ~13–20 h |
 
-The latest tested CCRL rating for Ember is **3160** ± 70 Elo in single-threaded mode.
-
 ## Search-shape benchmark
 
 For regressions where not only NPS matters, but also reached depth, node count, and tree
