@@ -2,13 +2,13 @@
   <img src="../logo.png" alt="Ember Logo" width="200">
 </p>
 
-# 🔥 Ember — шахматный движок на Rust
-
 <p align="center">
   <img src="https://img.shields.io/badge/rust-nightly--2026--02--08%2B-orange" alt="Rust Version">
-  <img src="https://img.shields.io/badge/UCI-compatible-brightgreen" alt="UCI Compatible">
+  <img src="https://img.shields.io/github/actions/workflow/status/ExxDreamerCode/Ember/ci.yml?branch=main&label=CI" alt="CI Status">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
 </p>
+
+# 🔥 Ember — шахматный движок на Rust
 
 **Автор:** [D.r.e.A.m.e.R](https://github.com/ExxDreamerCode) · **Соавтор:** [Boris Nagaev (@starius)](https://github.com/starius)
 
