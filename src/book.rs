@@ -246,11 +246,11 @@ const TURN_OFFSET: usize = 780;
 fn polyglot_hash(st: &BoardState) -> u64 {
     let mut hash = 0u64;
 
-    for pi in 0..12usize {
+    for (pi, &piece_bb) in st.bb.iter().enumerate() {
         let white = pi < 6;
         let pt = pi % 6;
         let idx = polyglot_piece_index(white, pt);
-        let mut bb = st.bb[pi];
+        let mut bb = piece_bb;
         while bb != 0 {
             let s = bb.trailing_zeros() as usize;
             let sq_pg = (7 - sq_r(s)) * 8 + sq_c(s);

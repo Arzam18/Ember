@@ -599,8 +599,8 @@ fn color_occupancy(st: &BoardState, color: u8) -> u64 {
 
 fn threat_mailbox(st: &BoardState) -> [usize; 64] {
     let mut mailbox = [THREAT_COLORED_PIECES; 64];
-    for piece in 0..THREAT_COLORED_PIECES {
-        let mut pieces = st.bb[piece];
+    for (piece, &piece_bb) in st.bb.iter().take(THREAT_COLORED_PIECES).enumerate() {
+        let mut pieces = piece_bb;
         while pieces != 0 {
             let square = pieces.trailing_zeros() as usize;
             pieces &= pieces - 1;

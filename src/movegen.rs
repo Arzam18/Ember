@@ -575,11 +575,7 @@ fn chess960_castle_is_legal(
     bb2[rook_pi] &= !bit(sq(kr, rook_col));
     bb2[king_pi] |= bit(sq(kr, king_dst_col));
     bb2[rook_pi] |= bit(sq(kr, rook_dst_col));
-    if is_attacked(&bb2, sq(kr, king_dst_col), !wturn) {
-        return false;
-    }
-
-    true
+    !is_attacked(&bb2, sq(kr, king_dst_col), !wturn)
 }
 
 #[allow(clippy::too_many_arguments)]
