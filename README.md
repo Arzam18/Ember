@@ -10,7 +10,9 @@
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
 </p>
 
-**Ember** is a UCI-compatible chess engine written in Rust. I build it for learning, experimentation, and steady engine work. The project is under active development and is regularly refined and improved.
+**Author:** [D.r.e.A.m.e.R](https://github.com/ExxDreamerCode) · **Co-author:** [Boris Nagaev (@starius)](https://github.com/starius)
+
+**Ember** is a UCI-compatible chess engine written in Rust. It is built for learning, experimentation, and steady engine work. The project is under active development and is regularly refined and improved.
 
 Russian version: [docs/README.ru.md](docs/README.ru.md).
 
