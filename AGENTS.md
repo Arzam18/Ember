@@ -477,7 +477,9 @@ already incorporated.
   Build the same source with both toolchains and compare both plain and shipped PGO binaries
   with interleaved NPS runs; report compiler versions, build flags, node counts, and run-to-run
   spread. Merge PGO profiles with `llvm-profdata` from that Rust toolchain; the Nix LLVM package
-  can use a different raw profile format.
+  can use a different raw profile format. Resolve host-tool paths using Rust's host triple,
+  which may differ from Nix's platform config (notably on Apple Silicon), and check the tool
+  exists before starting an instrumented build.
 - Add opponent packages separately from the comparison or test that consumes them. This
   keeps licensing/build review distinct from experimental methodology.
 - Treat Syzygy manifests as exact datasets. Verify file counts, WDL/DTZ pairing, store paths,

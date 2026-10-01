@@ -30,6 +30,15 @@ let
     }
     .${arch};
   nativeSystem = pkgs.stdenv.hostPlatform.system;
+  # Nix names the arm64 Darwin host "arm64-apple-darwin", while Rust
+  # installs host tools under "aarch64-apple-darwin". The host may also
+  # differ from the instrumented target when training under Rosetta.
+  toolchainHost =
+    {
+      "x86_64-darwin" = "x86_64-apple-darwin";
+      "aarch64-darwin" = "aarch64-apple-darwin";
+    }
+    .${nativeSystem};
   profileSystem =
     {
       amd64 = "x86_64-darwin";
@@ -61,7 +70,7 @@ let
     }
   );
   # Raw profile format follows rustc's bundled LLVM, which can differ from nixpkgs LLVM.
-  llvmProfdata = "${rustToolchain}/lib/rustlib/${pkgs.stdenv.hostPlatform.config}/bin/llvm-profdata";
+  llvmProfdata = "${rustToolchain}/lib/rustlib/${toolchainHost}/bin/llvm-profdata";
   rustPlatform = pkgs.makeRustPlatform {
     cargo = rustToolchain;
     rustc = rustToolchain;
@@ -81,6 +90,10 @@ rustPlatform.buildRustPackage {
 
   buildPhase = ''
     runHook preBuild
+    test -x ${llvmProfdata} || {
+      echo "Rust llvm-profdata is missing for host ${toolchainHost}" >&2
+      exit 1
+    }
     export CARGO_TARGET_${cargoTargetEnv}_LINKER="${linker}"
     export MACOSX_DEPLOYMENT_TARGET=11.0
     export RUSTFLAGS="-C target-cpu=${targetCpu} -Cprofile-generate=$PWD/profraw"
