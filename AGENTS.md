@@ -472,6 +472,12 @@ already incorporated.
 
 - Keep Nix inputs reproducible: pin exact upstream revisions and hashes. Do not silently
   replace an opponent binary or source release under the same package definition.
+- When upgrading the pinned Rust nightly, update the Rust toolchain file, the pinned
+  `rust-overlay` input, explicit CI toolchain references, and build documentation together.
+  Build the same source with both toolchains and compare both plain and shipped PGO binaries
+  with interleaved NPS runs; report compiler versions, build flags, node counts, and run-to-run
+  spread. Merge PGO profiles with `llvm-profdata` from that Rust toolchain; the Nix LLVM package
+  can use a different raw profile format.
 - Add opponent packages separately from the comparison or test that consumes them. This
   keeps licensing/build review distinct from experimental methodology.
 - Treat Syzygy manifests as exact datasets. Verify file counts, WDL/DTZ pairing, store paths,

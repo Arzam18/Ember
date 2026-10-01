@@ -57,8 +57,11 @@ let
     rustToolchainConfig
     // {
       targets = [ target ];
+      components = rustToolchainConfig.components ++ [ "llvm-tools-preview" ];
     }
   );
+  # Raw profile format follows rustc's bundled LLVM, which can differ from nixpkgs LLVM.
+  llvmProfdata = "${rustToolchain}/lib/rustlib/${pkgs.stdenv.hostPlatform.config}/bin/llvm-profdata";
   rustPlatform = pkgs.makeRustPlatform {
     cargo = rustToolchain;
     rustc = rustToolchain;
@@ -74,7 +77,6 @@ rustPlatform.buildRustPackage {
 
   nativeBuildInputs = [
     targetCc
-    pkgs.llvmPackages.llvm
   ];
 
   buildPhase = ''
@@ -91,7 +93,7 @@ rustPlatform.buildRustPackage {
     runHook preInstall
     printf 'bench depth 12\nbench depth 14\nquit\n' \
       | ${emulator}target/${target}/release/ember >/dev/null
-    ${pkgs.llvmPackages.llvm}/bin/llvm-profdata merge \
+    ${llvmProfdata} merge \
       -o merged.profdata profraw/*.profraw
     test -s merged.profdata || {
       echo "PGO profile merge produced no data" >&2

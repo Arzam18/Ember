@@ -301,12 +301,12 @@ jobs:
       - name: Install pinned Rust toolchain
         shell: pwsh
         run: |
-          rustup toolchain install nightly-2026-07-07 `
+          rustup toolchain install nightly-2026-10-01 `
             --profile minimal `
             --component clippy `
             --component rustfmt `
             --target x86_64-pc-windows-msvc
-          rustup default nightly-2026-07-07
+          rustup default nightly-2026-10-01
           rustup show
 
       - name: Configure Visual Studio environment

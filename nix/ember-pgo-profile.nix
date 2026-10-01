@@ -54,8 +54,11 @@ let
     rustToolchainConfig
     // {
       targets = [ target ];
+      components = rustToolchainConfig.components ++ [ "llvm-tools-preview" ];
     }
   );
+  # Raw profile format follows rustc's bundled LLVM, which can differ from nixpkgs LLVM.
+  llvmProfdata = "${rustToolchain}/lib/rustlib/${pkgs.stdenv.hostPlatform.config}/bin/llvm-profdata";
   rustPlatform = pkgs.makeRustPlatform {
     cargo = rustToolchain;
     rustc = rustToolchain;
@@ -72,7 +75,6 @@ rustPlatform.buildRustPackage {
   nativeBuildInputs = [
     crossCc
     pkgs.buildPackages.binutils
-    pkgs.llvmPackages.llvm
   ]
   ++ pkgs.lib.optionals (emulator != "" || arch == "arm64") [ pkgs.qemu-user ];
 
@@ -106,7 +108,7 @@ rustPlatform.buildRustPackage {
             | ${emulator}target/${target}/release/ember >"$out/training/bench.log" 2>&1
         ''
     }
-    ${pkgs.llvmPackages.llvm}/bin/llvm-profdata merge \
+    ${llvmProfdata} merge \
       -o merged.profdata profraw/*.profraw
     test -s merged.profdata || {
       echo "PGO profile merge produced no data" >&2
@@ -115,11 +117,11 @@ rustPlatform.buildRustPackage {
     ${lib.optionalString (arch == "arm64") ''
       # --covered lists names with nonzero counters (for both IR and frontend
       # profiles). It ignores --function, so filter its complete name list here.
-      ${pkgs.llvmPackages.llvm}/bin/llvm-profdata show --covered merged.profdata \
+      ${llvmProfdata} show --covered merged.profdata \
         >"$out/training/covered-functions.txt"
       for kernel in fc0_forward_aarch64_neon fc0_forward_aarch64_dotprod \
         dot_product_aarch64_neon dot_product_aarch64_dotprod; do
-        ${pkgs.llvmPackages.llvm}/bin/llvm-profdata show --counts --function="$kernel" \
+        ${llvmProfdata} show --counts --function="$kernel" \
           merged.profdata >"$out/training/$kernel.counts"
         grep -Fq "$kernel" "$out/training/covered-functions.txt" || {
           echo "PGO workload did not execute $kernel" >&2
