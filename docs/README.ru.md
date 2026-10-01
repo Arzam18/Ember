@@ -310,3 +310,14 @@ cargo build --release
 ## 📄 Лицензия
 
 Этот проект распространяется под лицензией MIT.
+
+Ember собирается, тестируется и обучается с использованием чужих наработок, и у каждой из них своя
+лицензия, отдельная от MIT выше:
+
+- тренер v1 работает на [Bullet](https://github.com/jw1912/bullet) (MIT) от Jamie Whiting, тренер
+  v2 — на [nnue-pytorch](https://github.com/official-stockfish/nnue-pytorch) (GPL-3.0);
+- данные для обучения — общедоступные бинпаки из
+  [official-stockfish/master-binpacks](https://huggingface.co/datasets/official-stockfish/master-binpacks)
+  (ODbL);
+- Python-инструменты в `tools/` и `training/` используют
+  [python-chess](https://github.com/niklasf/python-chess) (GPL-3.0-or-later).

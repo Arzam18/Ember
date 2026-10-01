@@ -298,3 +298,14 @@ Found a bug or have an idea? Open an issue or PR — help and feedback are welco
 ## 📄 License
 
 This project is distributed under the MIT license.
+
+Ember is built, tested, and trained with other people's work, and each of those keeps its own
+license, separate from the MIT license above:
+
+- the v1 trainer runs on [Bullet](https://github.com/jw1912/bullet) (MIT) by Jamie Whiting, and the
+  v2 trainer on [nnue-pytorch](https://github.com/official-stockfish/nnue-pytorch) (GPL-3.0);
+- the training data are the publicly available binpacks from
+  [official-stockfish/master-binpacks](https://huggingface.co/datasets/official-stockfish/master-binpacks)
+  (ODbL);
+- the Python tools under `tools/` and `training/` use
+  [python-chess](https://github.com/niklasf/python-chess) (GPL-3.0-or-later).
