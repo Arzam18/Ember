@@ -192,6 +192,7 @@ impl TimeManager {
                 1.3 + 0.11 * move_horizon,
             )
         } else {
+            // Some constants are taken from Stockfish.
             let original_time_adjust = *self
                 .original_time_adjust
                 .get_or_insert_with(|| 0.3272 * time_left_ms.log10() - 0.4141);
