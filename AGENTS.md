@@ -451,6 +451,13 @@ already incorporated.
 - Write imperative subjects. Use the body to explain the invariant, cause, and important
   trade-off, not to narrate every edit. Wrap commit-description lines.
 - Before committing, inspect the staged diff and verify that the description matches it.
+- Keep `docs/README.ru.md` synchronized with `README.md` in the same commit. The Russian
+  file is a full translation of the same document, so every shared element (a badge, an
+  external URL, a pinned version, a ratings table, a command, a section order) belongs in
+  both files together. Only the prose language and the `../` prefix on repository-local
+  asset paths differ. Never update one README and leave the other showing stale metadata;
+  a badge that still advertises a superseded toolchain pin is a documentation bug, not a
+  cosmetic difference.
 - Do not commit PR prose, scratch plans, downloaded reports, PGNs/results, tablebase
   archives, torrents, build outputs, or generated packages unless the repository explicitly
   tracks that artifact.
