@@ -255,7 +255,7 @@ Ratings are not comparable between the three lists.
 
 | Version | Rating | Games |
 | --- | ---: | ---: |
-| Ember 1.3.1 64-bit | 3277 ± 178 | 6 |
+| Ember 1.3.1 64-bit | 3361 ± 98 | 25 |
 | Ember 1.3.0 64-bit | 3154 ± 20 | 541 |
 
 **[CCRL Blitz (2m+1s)](https://computerchess.org.uk/ccrl/404/)** — Computed 2026-09-26
