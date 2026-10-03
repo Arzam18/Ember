@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/rust-nightly--2026--02--08%2B-orange" alt="Rust Version">
+  <img src="https://img.shields.io/badge/rust-nightly--2026--10--01-orange" alt="Rust Version">
   <img src="https://img.shields.io/github/actions/workflow/status/ExxDreamerCode/Ember/ci.yml?branch=main&label=CI" alt="CI Status">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
 </p>
