@@ -263,22 +263,22 @@ bench depth 12 positions 4   # первые 4 позиции набора на �
 
 Рейтинги в этих трёх списках несопоставимы напрямую.
 
-**[CCRL 40/15](https://computerchess.org.uk/ccrl/4040/)** — Расчёт 2026-09-28
+**[CCRL 40/15](https://computerchess.org.uk/ccrl/4040/)** — Расчёт 2026-10-03
 
 | Версия | Рейтинг | Партий |
 | --- | ---: | ---: |
-| Ember 1.3.1 64-bit | 3277 ± 178 | 6 |
+| Ember 1.3.1 64-bit | 3361 ± 98 | 25 |
 | Ember 1.3.0 64-bit | 3154 ± 20 | 541 |
 
-**[CCRL Blitz (2m+1s)](https://computerchess.org.uk/ccrl/404/)** Расчёт 2026-09-26
+**[CCRL Blitz (2m+1s)](https://computerchess.org.uk/ccrl/404/)** Расчёт 2026-10-03
 
 | Версия | Рейтинг | Партий |
 | --- | ---: | ---: |
-| Ember 1.3.1 64-bit | 3381 ± 21 | 575 |
+| Ember 1.3.1 64-bit | 3389 ± 16 | 1024 |
 | Ember 1.1.2 64-bit | 3020 ± 17 | 1056 |
 | Ember 0.9.2 64-bit | 1928 ± 20 | 906 |
 
-**[CCRL FRC](https://computerchess.org.uk/ccrl/404FRC/)** — 86-е место
+**[CCRL FRC](https://computerchess.org.uk/ccrl/404FRC/)** — Расчёт 2026-10-03
 
 | Версия | Рейтинг | Партий |
 | --- | ---: | ---: |
