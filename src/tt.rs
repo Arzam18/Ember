@@ -105,7 +105,7 @@ impl SharedTT {
         let idx = (key as usize) & inner.mask;
         let entry = &inner.entries[idx];
 
-        let stored_key_xor = entry.key.load(Ordering::Relaxed);
+        let stored_key_xor = entry.key.load(Ordering::Acquire);
         let data = entry.data.load(Ordering::Relaxed);
 
         if stored_key_xor ^ data != key {
@@ -121,6 +121,23 @@ impl SharedTT {
 
     pub fn generation(&self) -> u8 {
         self.generation.load(Ordering::Relaxed) & TT_GENERATION_MASK
+    }
+
+    #[inline(always)]
+    pub fn prefetch(&self, key: u64) {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let inner = unsafe { &*self.inner.get() };
+            let idx = (key as usize) & inner.mask;
+            let ptr = inner.entries[idx].key.as_ptr();
+            unsafe {
+                std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0);
+            }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let _ = key;
+        }
     }
 
     pub fn advance_generation(&self) -> u8 {
@@ -168,15 +185,8 @@ impl SharedTT {
         if replace {
             let packed = pack_data(depth, score, flag, best_move, pv, self.generation());
             entry.data.store(packed, Ordering::Relaxed);
-            entry.key.store(key ^ packed, Ordering::Relaxed);
+            entry.key.store(key ^ packed, Ordering::Release);
         }
-    }
-
-    pub fn resize(&self, mb: usize) {
-        let _lock = self.resize_lock.lock().unwrap();
-        let inner = unsafe { &mut *self.inner.get() };
-        let size = table_size_for_mb(mb);
-        Self::replace_entries(inner, size);
     }
 
     pub fn ensure_size(&self, mb: usize) {

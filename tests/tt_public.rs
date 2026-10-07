@@ -1,4 +1,7 @@
 use ember_chess::tt::{SharedTT, TT_ALPHA, TT_BETA, TT_EXACT};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[test]
 fn tt_store_get_roundtrip() {
@@ -64,4 +67,119 @@ fn tt_miss_on_wrong_key() {
     let tt = SharedTT::new(1);
     tt.store(0xAAAA, 1, 100, TT_EXACT, None);
     assert!(tt.get_depth(0xBBBB).is_none(), "wrong key should miss");
+}
+
+#[test]
+fn tt_prefetch_leaves_the_table_intact() {
+    let tt = SharedTT::new(1);
+    tt.prefetch(0x1234);
+    assert!(tt.get_entry(0x1234).is_none());
+    tt.store(0x1234, 7, 250, TT_EXACT, Some(0xABCD));
+    tt.prefetch(0x1234);
+    tt.prefetch(0xFFFF_FFFF_0000_0001);
+    let (d, s, f, m) = tt.get_depth(0x1234).unwrap();
+    assert_eq!((d, s, f, m), (7, 250, TT_EXACT, Some(0xABCD)));
+}
+
+#[test]
+fn tt_probe_polling_observes_writer_progress() {
+    const ROUNDS: u32 = 40_000;
+    const KEY: u64 = 0x5A5A_0000_1234_0001;
+
+    let tt = Arc::new(SharedTT::new(1));
+    let writer = {
+        let tt = Arc::clone(&tt);
+        thread::spawn(move || {
+            for round in 0..ROUNDS {
+                let best_move = 0x1001 + round as u16;
+                tt.store(KEY, 4, round as i32, TT_EXACT, Some(best_move));
+            }
+        })
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut last_seen = -1i32;
+    while last_seen < ROUNDS as i32 - 1 {
+        assert!(
+            Instant::now() < deadline,
+            "probe never observed the final entry; last score {last_seen}"
+        );
+        if let Some(entry) = tt.get_entry(KEY) {
+            assert!(
+                entry.score >= 0 && entry.score < ROUNDS as i32,
+                "probe observed a score no store wrote: {}",
+                entry.score
+            );
+            assert_eq!(entry.depth, 4, "depth does not match the stored entry");
+            assert_eq!(
+                entry.best_move,
+                Some(0x1001 + entry.score as u16),
+                "best_move does not match the stored score"
+            );
+            assert!(
+                entry.score >= last_seen,
+                "probe moved backwards: {last_seen} -> {}",
+                entry.score
+            );
+            last_seen = entry.score;
+        }
+    }
+    writer.join().expect("writer thread panicked");
+}
+
+#[test]
+fn tt_concurrent_probes_never_observe_torn_entries() {
+    const ROUNDS: u32 = 200_000;
+    const KEY: u64 = 0xC0DE_0000_0BAD_F00D;
+
+    fn assert_consistent(entry: &ember_chess::tt::TTEntry) {
+        assert!(
+            entry.score >= 0 && entry.score < ROUNDS as i32,
+            "probe observed a score no store wrote: {}",
+            entry.score
+        );
+        let expected_depth = (entry.score % 8) + 1;
+        let expected_move = 0x2000 + (entry.score as u32 & 0xFFF);
+        assert_eq!(
+            entry.depth, expected_depth,
+            "torn entry: depth does not match score"
+        );
+        assert_eq!(
+            entry.best_move,
+            Some(expected_move as u16),
+            "torn entry: best_move does not match score"
+        );
+    }
+
+    let tt = Arc::new(SharedTT::new(1));
+    let writer = {
+        let tt = Arc::clone(&tt);
+        thread::spawn(move || {
+            for i in 0..ROUNDS {
+                let score = i as i32;
+                let depth = ((i % 8) + 1) as i32;
+                let best_move = (0x2000 + (i & 0xFFF)) as u16;
+                tt.store(KEY, depth, score, TT_EXACT, Some(best_move));
+            }
+        })
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut last_seen = -1i32;
+    while last_seen < ROUNDS as i32 - 1 {
+        assert!(
+            Instant::now() < deadline,
+            "probe never observed the final entry; last score {last_seen}"
+        );
+        if let Some(entry) = tt.get_entry(KEY) {
+            assert_consistent(&entry);
+            assert!(
+                entry.score >= last_seen,
+                "probe moved backwards: {last_seen} -> {}",
+                entry.score
+            );
+            last_seen = entry.score;
+        }
+    }
+    writer.join().expect("writer thread panicked");
 }

@@ -139,6 +139,122 @@ fn assert_go_nodes_returns_promptly(threads: usize) {
 }
 
 #[test]
+fn syzygy_path_can_be_disabled_and_reenabled_after_worker_creation() {
+    let Ok(path) = std::env::var("EMBER_TEST_SYZYGY_PATH") else {
+        eprintln!("skipping UCI Syzygy reload regression: EMBER_TEST_SYZYGY_PATH is unset");
+        return;
+    };
+    let (mut child, rx) = spawn_ember();
+    let mut stdin = child.stdin.take().expect("capture Ember stdin");
+    writeln!(stdin, "uci").unwrap();
+    writeln!(stdin, "setoption name Threads value 2").unwrap();
+    writeln!(stdin, "setoption name OwnBook value false").unwrap();
+    writeln!(stdin, "setoption name SyzygyPath value {path}").unwrap();
+    writeln!(stdin, "isready").unwrap();
+    stdin.flush().unwrap();
+    assert!(wait_for_line(&rx, "readyok", UCI_STARTUP_TIMEOUT).is_some());
+
+    let probe = |stdin: &mut std::process::ChildStdin, rx: &Receiver<String>| {
+        writeln!(stdin, "position fen 7k/8/8/8/8/8/8/1Q2K3 w - - 0 1").unwrap();
+        writeln!(stdin, "go depth 1").unwrap();
+        stdin.flush().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut probed = false;
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            let line = rx.recv_timeout(remaining).expect("Syzygy search response");
+            if line.starts_with("info depth 1 ") && info_number(&line, "nodes") == Some(0) {
+                probed = true;
+            }
+            if line.starts_with("bestmove ") {
+                assert!(probed, "search did not use the root tablebase");
+                return;
+            }
+        }
+        panic!("Syzygy search timed out");
+    };
+    probe(&mut stdin, &rx);
+    writeln!(stdin, "setoption name SyzygyPath value <empty>").unwrap();
+    writeln!(stdin, "setoption name SyzygyPath value {path}").unwrap();
+    writeln!(stdin, "isready").unwrap();
+    stdin.flush().unwrap();
+    assert!(wait_for_line(&rx, "readyok", UCI_STARTUP_TIMEOUT).is_some());
+    probe(&mut stdin, &rx);
+
+    writeln!(stdin, "quit").unwrap();
+    stdin.flush().unwrap();
+    drop(stdin);
+    assert!(child.wait().expect("wait for Ember").success());
+}
+
+#[test]
+#[ignore = "run with SYZYGY_CI_PATH pointing to the compact Nix tablebase set"]
+fn ci_syzygy_reload_during_active_search_applies_to_next_search() {
+    let path = std::env::var("SYZYGY_CI_PATH").expect("SYZYGY_CI_PATH is required");
+    let old_dir = std::env::temp_dir().join(format!(
+        "ember-uci-syzygy-old-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir(&old_dir).unwrap();
+    for ext in ["rtbw", "rtbz"] {
+        let name = format!("KQvK.{ext}");
+        fs::copy(Path::new(&path).join(&name), old_dir.join(name)).unwrap();
+    }
+
+    let (mut child, rx) = spawn_ember();
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, "uci").unwrap();
+    writeln!(stdin, "setoption name Threads value 2").unwrap();
+    writeln!(stdin, "setoption name OwnBook value false").unwrap();
+    writeln!(
+        stdin,
+        "setoption name SyzygyPath value {}",
+        old_dir.display()
+    )
+    .unwrap();
+    writeln!(stdin, "isready").unwrap();
+    stdin.flush().unwrap();
+    assert!(wait_for_line(&rx, "readyok", UCI_STARTUP_TIMEOUT).is_some());
+
+    writeln!(stdin, "position startpos").unwrap();
+    writeln!(stdin, "go infinite").unwrap();
+    stdin.flush().unwrap();
+    assert!(wait_for_line(&rx, "info depth ", Duration::from_secs(5)).is_some());
+    writeln!(stdin, "setoption name SyzygyPath value {path}").unwrap();
+    writeln!(stdin, "isready").unwrap();
+    stdin.flush().unwrap();
+    assert!(wait_for_line(&rx, "readyok", Duration::from_secs(5)).is_some());
+    writeln!(stdin, "stop").unwrap();
+    stdin.flush().unwrap();
+    assert!(wait_for_line(&rx, "bestmove ", Duration::from_secs(5)).is_some());
+
+    writeln!(stdin, "position fen 6rk/8/8/8/8/8/8/KNN5 w - - 0 1").unwrap();
+    writeln!(stdin, "go depth 1").unwrap();
+    stdin.flush().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut root_hit = false;
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        let line = rx.recv_timeout(remaining).expect("Syzygy root response");
+        if line.starts_with("info depth 1 ") && info_number(&line, "nodes") == Some(0) {
+            root_hit = true;
+        }
+        if line.starts_with("bestmove ") {
+            assert!(root_hit, "next search did not use the new tablebase set");
+            break;
+        }
+    }
+    assert!(root_hit);
+    writeln!(stdin, "quit").unwrap();
+    stdin.flush().unwrap();
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+    fs::remove_dir_all(old_dir).unwrap();
+}
+
+#[test]
 fn go_nodes_returns_promptly_in_single_threaded_search() {
     assert_go_nodes_returns_promptly(1);
 }
@@ -928,6 +1044,98 @@ fn ownbook_and_empty_book_option_both_gate_the_embedded_book() {
     assert!(
         !output.iter().any(|line| line.contains("book move")),
         "Book=\"\" must disable the book even when OwnBook=true: {output:?}"
+    );
+
+    writeln!(stdin, "quit").unwrap();
+    stdin.flush().unwrap();
+    drop(stdin);
+    assert!(child.wait().expect("wait for Ember").success());
+}
+
+#[test]
+fn go_infinite_searches_until_stop() {
+    let (mut child, rx) = spawn_ember();
+    let mut stdin = child.stdin.take().expect("capture Ember stdin");
+    writeln!(stdin, "uci").unwrap();
+    writeln!(stdin, "setoption name Hash value 16").unwrap();
+    writeln!(stdin, "setoption name Threads value 1").unwrap();
+    writeln!(stdin, "setoption name Book value").unwrap();
+    writeln!(stdin, "isready").unwrap();
+    stdin.flush().unwrap();
+    assert!(wait_for_line(&rx, "readyok", UCI_STARTUP_TIMEOUT).is_some());
+
+    writeln!(stdin, "position startpos").unwrap();
+    writeln!(stdin, "go infinite").unwrap();
+    stdin.flush().unwrap();
+    assert!(
+        wait_for_line(&rx, "bestmove ", Duration::from_millis(500)).is_none(),
+        "go infinite must not terminate on its own"
+    );
+    assert!(
+        wait_for_info_time_at_least(&rx, 100, Duration::from_secs(5)),
+        "go infinite did not keep searching"
+    );
+
+    writeln!(stdin, "stop").unwrap();
+    stdin.flush().unwrap();
+    assert!(
+        wait_for_line(&rx, "bestmove ", Duration::from_secs(5)).is_some(),
+        "stop did not release a bestmove from go infinite"
+    );
+
+    writeln!(stdin, "quit").unwrap();
+    stdin.flush().unwrap();
+    drop(stdin);
+    assert!(child.wait().expect("wait for Ember").success());
+}
+
+#[test]
+fn setoption_hash_during_running_search_keeps_the_engine_consistent() {
+    let (mut child, rx) = spawn_ember();
+    let mut stdin = child.stdin.take().expect("capture Ember stdin");
+    writeln!(stdin, "uci").unwrap();
+    writeln!(stdin, "setoption name Hash value 16").unwrap();
+    writeln!(stdin, "setoption name Threads value 4").unwrap();
+    writeln!(stdin, "setoption name Book value").unwrap();
+    writeln!(stdin, "isready").unwrap();
+    stdin.flush().unwrap();
+    assert!(wait_for_line(&rx, "readyok", UCI_STARTUP_TIMEOUT).is_some());
+
+    writeln!(stdin, "position startpos").unwrap();
+    writeln!(stdin, "go ponder movetime 200").unwrap();
+    stdin.flush().unwrap();
+    assert!(
+        wait_for_info_time_at_least(&rx, 50, Duration::from_secs(5)),
+        "ponder search did not start"
+    );
+
+    writeln!(stdin, "setoption name Hash value 32").unwrap();
+    writeln!(stdin, "setoption name Hash value 8").unwrap();
+    writeln!(stdin, "setoption name Hash value 64").unwrap();
+    writeln!(stdin, "ponderhit").unwrap();
+    stdin.flush().unwrap();
+    let bestmove = wait_for_line(&rx, "bestmove ", Duration::from_secs(10))
+        .expect("ponder search did not finish after Hash changed mid-search");
+    assert!(
+        bestmove.split_whitespace().count() >= 2,
+        "expected a bestmove after a mid-search Hash change: {bestmove}"
+    );
+
+    writeln!(stdin, "position startpos").unwrap();
+    writeln!(stdin, "go infinite").unwrap();
+    stdin.flush().unwrap();
+    assert!(
+        wait_for_info_time_at_least(&rx, 100, Duration::from_secs(5)),
+        "background search did not start"
+    );
+    writeln!(stdin, "setoption name Hash value 24").unwrap();
+    writeln!(stdin, "setoption name Hash value 12").unwrap();
+    stdin.flush().unwrap();
+    writeln!(stdin, "stop").unwrap();
+    stdin.flush().unwrap();
+    assert!(
+        wait_for_line(&rx, "bestmove ", Duration::from_secs(10)).is_some(),
+        "stopped search did not return a move after a mid-search Hash change"
     );
 
     writeln!(stdin, "quit").unwrap();

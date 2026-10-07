@@ -8,7 +8,6 @@ use ember_chess::evaluate;
 use ember_chess::search::{
     active_search_backend, set_search_backend_override, SearchLearning, SEARCH_THREAD_STACK_SIZE,
 };
-use ember_chess::syzygy::SyzygyTables;
 use ember_chess::time_management::TimeManager;
 use ember_chess::tune::{self, TuneParam};
 use ember_chess::zobrist::compute_hash;
@@ -378,7 +377,11 @@ fn run_uci_loop() {
                     }
                     "syzygypath" => {
                         if val.is_empty() || val.to_lowercase() == "<empty>" {
-                            engine.searcher.syzygy = SyzygyTables::new();
+                            engine
+                                .searcher
+                                .syzygy
+                                .load("<empty>")
+                                .expect("disabling Syzygy cannot fail");
                             eprintln!("info string Syzygy tables disabled");
                         } else {
                             match engine.searcher.syzygy.load(&val) {
@@ -765,7 +768,7 @@ fn parse_setoption(engine: &mut Engine, name: &str, val: &str) {
         "hash" => {
             if let Ok(mb) = val.parse::<usize>() {
                 if (MIN_HASH_MB..=MAX_HASH_MB).contains(&mb) {
-                    engine.searcher.resize_tt(mb);
+                    engine.set_hash_mb(mb);
                 } else {
                     eprintln!("info string Ignoring out-of-range Hash value: {}", mb);
                 }
@@ -962,6 +965,13 @@ fn parse_uci_move(mv: &str) -> Option<(usize, usize, usize, usize, u8)> {
     Some((sr, sc, er, ec, promotion))
 }
 
+fn parse_clock_ms(raw: &str) -> f64 {
+    raw.parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(1.0)
+}
+
 fn parse_go_params(
     parts: &[&str],
     engine: &Engine,
@@ -977,40 +987,61 @@ fn parse_go_params(
     let mut movestogo = 0i32;
     let mut ponder = false;
     let mut has_clock_limit = false;
+    let mut infinite = false;
+    let mut depth_was_set = false;
 
     let mut i = 1;
     while i < parts.len() {
         match parts[i] {
             "wtime" if i + 1 < parts.len() => {
-                wtime = parts[i + 1].parse().unwrap_or(300000.0);
+                wtime = parse_clock_ms(parts[i + 1]);
                 has_clock_limit = true;
                 i += 1;
             }
             "btime" if i + 1 < parts.len() => {
-                btime = parts[i + 1].parse().unwrap_or(300000.0);
+                btime = parse_clock_ms(parts[i + 1]);
                 has_clock_limit = true;
                 i += 1;
             }
             "winc" if i + 1 < parts.len() => {
-                winc = parts[i + 1].parse().unwrap_or(0.0);
+                winc = parts[i + 1]
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|value| value.is_finite() && *value >= 0.0)
+                    .unwrap_or(0.0);
                 has_clock_limit = true;
                 i += 1;
             }
             "binc" if i + 1 < parts.len() => {
-                binc = parts[i + 1].parse().unwrap_or(0.0);
+                binc = parts[i + 1]
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|value| value.is_finite() && *value >= 0.0)
+                    .unwrap_or(0.0);
                 has_clock_limit = true;
                 i += 1;
             }
             "movetime" if i + 1 < parts.len() => {
-                movetime = parts[i + 1].parse().unwrap_or(0.0);
+                movetime = parse_clock_ms(parts[i + 1]);
                 i += 1;
             }
             "depth" if i + 1 < parts.len() => {
-                depth = parts[i + 1].parse().unwrap_or(64);
+                depth = parts[i + 1]
+                    .parse::<i32>()
+                    .ok()
+                    .filter(|&d| d >= 1)
+                    .unwrap_or(1);
+                depth_was_set = true;
                 i += 1;
             }
             "nodes" if i + 1 < parts.len() => {
-                node_limit = parts[i + 1].parse::<u64>().ok().filter(|&nodes| nodes > 0);
+                node_limit = Some(
+                    parts[i + 1]
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|&nodes| nodes > 0)
+                        .unwrap_or(1),
+                );
                 i += 1;
             }
             "movestogo" if i + 1 < parts.len() => {
@@ -1019,7 +1050,7 @@ fn parse_go_params(
                 i += 1;
             }
             "infinite" => {
-                movetime = 1_000_000.0;
+                infinite = true;
             }
             "ponder" => {
                 ponder = true;
@@ -1031,10 +1062,12 @@ fn parse_go_params(
 
     let time_ms = if engine.st.w { wtime } else { btime };
     let inc = if engine.st.w { winc } else { binc };
-    let (soft_seconds, hard_seconds, clock_managed) = if movetime > 0.0 {
+    let (soft_seconds, hard_seconds, clock_managed) = if infinite {
+        (1_000_000_000.0, 1_000_000_000.0, false)
+    } else if movetime > 0.0 {
         let t = movetime / 1000.0;
         (t, t, true)
-    } else if depth < 64 || (node_limit.is_some() && !has_clock_limit) {
+    } else if depth_was_set || (node_limit.is_some() && !has_clock_limit) {
         (1_000_000_000.0, 1_000_000_000.0, false)
     } else {
         let budget = time_manager.clock_budget(time_ms, inc, movestogo, engine.st.mc);
@@ -1252,6 +1285,119 @@ mod tests {
     }
 
     #[test]
+    fn go_parsing_fails_closed_on_invalid_depth() {
+        let engine = Engine::new();
+        let mut time_manager = TimeManager::default();
+
+        let limits = parse_go_params(&["go", "depth", "abc"], &engine, &mut time_manager);
+        assert_eq!(
+            limits.depth, 1,
+            "garbage depth must fail closed: {limits:?}"
+        );
+        let limits = parse_go_params(&["go", "depth", "-3"], &engine, &mut time_manager);
+        assert_eq!(
+            limits.depth, 1,
+            "negative depth must fail closed: {limits:?}"
+        );
+        let limits = parse_go_params(&["go", "depth", "12"], &engine, &mut time_manager);
+        assert_eq!(
+            limits.depth, 12,
+            "valid depth must pass through: {limits:?}"
+        );
+    }
+
+    #[test]
+    fn go_parsing_clamps_invalid_clocks_to_a_minimal_budget() {
+        let engine = Engine::new();
+        let mut time_manager = TimeManager::default();
+
+        let limits = parse_go_params(
+            &[
+                "go", "wtime", "-23", "btime", "garbage", "winc", "-5", "binc", "x",
+            ],
+            &engine,
+            &mut time_manager,
+        );
+        assert!(
+            limits.clock_managed,
+            "invalid clocks still yield a clocked search"
+        );
+        assert!(
+            limits.hard_seconds >= limits.soft_seconds
+                && limits.soft_seconds > 0.0
+                && limits.soft_seconds <= 0.01
+                && limits.hard_seconds <= 0.01,
+            "invalid clocks must collapse to a minimal but positive budget: {limits:?}"
+        );
+    }
+
+    #[test]
+    fn explicit_depth_bypasses_the_clock_while_implicit_depth_stays_clocked() {
+        let engine = Engine::new();
+        let mut time_manager = TimeManager::default();
+
+        let limits = parse_go_params(
+            &["go", "depth", "64", "wtime", "300000", "btime", "300000"],
+            &engine,
+            &mut time_manager,
+        );
+        assert!(
+            !limits.clock_managed,
+            "explicit go depth 64 must be untimed: {limits:?}"
+        );
+        assert_eq!(limits.depth, 64, "{limits:?}");
+
+        let implicit = parse_go_params(
+            &[
+                "go", "wtime", "8000", "btime", "8000", "winc", "80", "binc", "80",
+            ],
+            &engine,
+            &mut time_manager,
+        );
+        assert!(
+            implicit.clock_managed,
+            "clocks without a depth token must stay clocked: {implicit:?}"
+        );
+    }
+
+    #[test]
+    fn go_parsing_fails_closed_on_invalid_nodes() {
+        let engine = Engine::new();
+        let mut time_manager = TimeManager::default();
+
+        let limits = parse_go_params(&["go", "nodes", "garbage"], &engine, &mut time_manager);
+        assert_eq!(limits.node_limit, Some(1), "{limits:?}");
+        assert!(!limits.clock_managed, "{limits:?}");
+
+        let limits = parse_go_params(&["go", "nodes", "0"], &engine, &mut time_manager);
+        assert_eq!(limits.node_limit, Some(1), "{limits:?}");
+
+        let limits = parse_go_params(&["go", "nodes", "-5"], &engine, &mut time_manager);
+        assert_eq!(limits.node_limit, Some(1), "{limits:?}");
+
+        let limits = parse_go_params(&["go", "nodes", "1000"], &engine, &mut time_manager);
+        assert_eq!(limits.node_limit, Some(1000), "{limits:?}");
+    }
+
+    #[test]
+    fn go_infinite_bypasses_the_time_manager() {
+        let engine = Engine::new();
+        let mut time_manager = TimeManager::default();
+
+        let limits = parse_go_params(
+            &["go", "infinite", "wtime", "5000", "btime", "5000"],
+            &engine,
+            &mut time_manager,
+        );
+        assert!(
+            !limits.clock_managed,
+            "infinite must bypass the clock: {limits:?}"
+        );
+        assert!(limits.hard_seconds >= 1e8, "{limits:?}");
+        assert_eq!(limits.depth, 64, "{limits:?}");
+    }
+
+    #[test]
     fn setoption_rejects_out_of_range_resources() {
         let mut engine = Engine::new();
         let hash_mb = engine.searcher.tt_mb;
@@ -1401,9 +1547,11 @@ mod tests {
     #[test]
     fn reset_preserves_loaded_syzygy_tables() {
         let mut engine = Engine::new();
-        engine.searcher.syzygy.tables = Some(std::sync::Arc::new(shakmaty_syzygy::Tablebase::<
-            shakmaty::Chess,
-        >::new()));
+        let dir = std::env::temp_dir().join(format!("ember-reset-syzygy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = std::fs::File::create(dir.join("KQvK.rtbw")).unwrap();
+        file.set_len(80).unwrap();
+        engine.searcher.syzygy.load(dir.to_str().unwrap()).unwrap();
 
         reset_engine(&mut engine);
 
@@ -1411,6 +1559,7 @@ mod tests {
             engine.searcher.syzygy.is_loaded(),
             "ucinewgame must preserve the configured SyzygyPath"
         );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
