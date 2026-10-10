@@ -36,11 +36,11 @@ pub(super) struct LazySmpRootContext {
     pub(super) syzygy: SyzygyTables,
     pub(super) tt_mb: usize,
     pub(super) pondering: Arc<AtomicBool>,
-    pub(super) learning: SearchLearning,
+    pub(super) learning: Option<Box<SearchLearning>>,
 }
 
 impl LazySmpRootContext {
-    pub(super) fn from_searcher(searcher: &Searcher) -> Self {
+    pub(super) fn from_searcher(searcher: &Searcher, include_learning: bool) -> Self {
         Self {
             rep_stack: searcher.rep_stack.clone(),
             rep_stack_len: searcher.rep_stack_len,
@@ -51,7 +51,7 @@ impl LazySmpRootContext {
             syzygy: searcher.syzygy.clone(),
             tt_mb: searcher.tt_mb,
             pondering: Arc::clone(&searcher.pondering),
-            learning: searcher.export_learning(),
+            learning: include_learning.then(|| Box::new(searcher.export_learning())),
         }
     }
 
@@ -67,7 +67,11 @@ impl LazySmpRootContext {
         searcher.stopped = stopped;
         searcher.pondering = Arc::clone(&self.pondering);
         if initialize_learning {
-            searcher.import_learning(&self.learning);
+            searcher.import_learning(
+                self.learning
+                    .as_deref()
+                    .expect("new SMP worker requires a root learning snapshot"),
+            );
         }
         searcher.prepare_for_search();
         searcher.rep_stack.clone_from(&self.rep_stack);
@@ -185,8 +189,9 @@ impl LazySmpPool {
         }
     }
 
-    fn ensure_workers(&self, count: usize) {
+    fn ensure_workers(&self, count: usize) -> bool {
         let mut workers = self.workers.lock().unwrap();
+        let mut initialize_learning = false;
         for thread_id in 0..count.min(workers.len()) {
             let finished = workers[thread_id]
                 .handle
@@ -196,6 +201,7 @@ impl LazySmpPool {
                 let mut replacement = spawn_lazy_smp_worker(thread_id)
                     .unwrap_or_else(|error| panic!("failed to replace search worker: {error}"));
                 std::mem::swap(&mut workers[thread_id], &mut replacement);
+                initialize_learning = true;
                 if let Some(handle) = replacement.handle.take() {
                     let _ = handle.join();
                 }
@@ -207,7 +213,9 @@ impl LazySmpPool {
                 spawn_lazy_smp_worker(thread_id)
                     .unwrap_or_else(|error| panic!("failed to spawn search worker: {error}")),
             );
+            initialize_learning = true;
         }
+        initialize_learning
     }
 
     pub fn clear_learning(&self) {
@@ -245,7 +253,11 @@ impl LazySmpPool {
         assert!(!root_moves.is_empty());
         let num_threads = num_threads.max(1);
         let _search_guard = self.search_lock.lock().unwrap();
-        self.ensure_workers(num_threads);
+        // Every created/replaced worker initializes on the immediately dispatched
+        // job, even if already stopped. Under search_lock, all other workers have
+        // completed a prior dispatch and retain their searchers (also after clear).
+        // Prewarming or deferred initialization would require revisiting this signal.
+        let include_learning = self.ensure_workers(num_threads);
 
         let job = Arc::new(LazySmpSearchJob {
             shared_tt,
@@ -254,7 +266,10 @@ impl LazySmpPool {
             root_moves: Arc::new(root_moves.to_vec()),
             num_threads,
             limits,
-            root_context: Arc::new(LazySmpRootContext::from_searcher(root_searcher)),
+            root_context: Arc::new(LazySmpRootContext::from_searcher(
+                root_searcher,
+                include_learning,
+            )),
             start: limits.start,
             global_best_depth: Arc::new(AtomicI32::new(0)),
             printed_depth: Arc::new(AtomicI32::new(0)),
@@ -759,4 +774,393 @@ fn run_lazy_smp_worker(
     };
     searcher.clear_node_limit();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn root() -> (BoardState, Searcher) {
+        // The board only supplies legal root moves and accumulator initialization.
+        // These tests observe private snapshot, preparation, and worker identities;
+        // TSV root-move assertions cannot express those contracts.
+        let engine = crate::Engine::new();
+        (engine.st, engine.searcher)
+    }
+
+    fn seed(searcher: &mut Searcher, value: i32) {
+        searcher.history[12][28] = value;
+        searcher.history[63][0] = -value;
+        searcher.corr_hist[123] = value / 10;
+        searcher.corr_hist[456] = -value / 10;
+        searcher.counter_move[7][31] = Some(crate::board::encode_move(6, 0, 5, 0, 0));
+    }
+
+    fn assert_learning(actual: &SearchLearning, expected: &Searcher) {
+        assert_eq!(actual.history, expected.history);
+        assert_eq!(actual.corr_hist, expected.corr_hist);
+        assert_eq!(actual.counter_move, expected.counter_move);
+    }
+
+    #[test]
+    fn lazy_smp_context_imports_only_into_cold_workers() {
+        let (st, mut parent) = root();
+        seed(&mut parent, 1_600);
+        let cold_context = LazySmpRootContext::from_searcher(&parent, true);
+        assert_learning(cold_context.learning.as_deref().unwrap(), &parent);
+        let warm_context = LazySmpRootContext::from_searcher(&parent, false);
+        assert!(warm_context.learning.is_none());
+        assert!(std::mem::size_of::<LazySmpRootContext>() < std::mem::size_of::<SearchLearning>());
+
+        for include_learning in [false, true] {
+            let context = if include_learning {
+                &cold_context
+            } else {
+                &warm_context
+            };
+            let (_, mut worker) = root();
+            seed(&mut worker, 3_200);
+            let (_, mut expected) = root();
+            expected.import_learning(&worker.export_learning());
+            expected.prepare_for_search();
+            context.prepare_worker(
+                &mut worker,
+                Arc::clone(&parent.shared_tt),
+                Arc::clone(&parent.stopped),
+                &st,
+                false,
+            );
+            assert_learning(&worker.export_learning(), &expected);
+        }
+
+        let (_, mut cold) = root();
+        seed(&mut cold, 8_000);
+        cold_context.prepare_worker(
+            &mut cold,
+            Arc::clone(&parent.shared_tt),
+            Arc::clone(&parent.stopped),
+            &st,
+            true,
+        );
+        parent.prepare_for_search();
+        assert_learning(&cold.export_learning(), &parent);
+        assert_eq!(cold.history[12][28], 1_300);
+    }
+
+    #[test]
+    #[should_panic(expected = "new SMP worker requires a root learning snapshot")]
+    fn lazy_smp_cold_preparation_requires_learning_snapshot() {
+        let (st, parent) = root();
+        let (_, mut cold) = root();
+        LazySmpRootContext::from_searcher(&parent, false).prepare_worker(
+            &mut cold,
+            Arc::clone(&parent.shared_tt),
+            Arc::clone(&parent.stopped),
+            &st,
+            true,
+        );
+    }
+
+    #[test]
+    fn lazy_smp_warm_context_refreshes_nonlearning_state() {
+        crate::evaluate::init_embedded_nnue().unwrap();
+        let (st, mut parent) = root();
+        assert!(parent.ember_v2_net.is_some());
+        parent.rep_stack = vec![11, 22, 33];
+        parent.rep_stack_len = 3;
+        parent.tt_mb = 1;
+        parent.search_backend = SearchBackendKind::Scalar;
+        parent.pondering = Arc::new(AtomicBool::new(true));
+        let context = LazySmpRootContext::from_searcher(&parent, false);
+        let (_, mut worker) = root();
+        worker.rep_stack = vec![99];
+        worker.rep_stack_len = 1;
+        worker.nnue_net = None;
+        worker.ember_v2_net = None;
+        worker.classic_net = None;
+        worker.stopped = Arc::new(AtomicBool::new(true));
+        seed(&mut worker, 3_200);
+        context.prepare_worker(
+            &mut worker,
+            Arc::clone(&parent.shared_tt),
+            Arc::clone(&parent.stopped),
+            &st,
+            false,
+        );
+        assert_eq!(worker.rep_stack, parent.rep_stack);
+        assert_eq!(worker.rep_stack_len, 3);
+        assert_eq!(worker.rep_root_len, 3);
+        assert_eq!(worker.tt_mb, 1);
+        assert_eq!(worker.search_backend, SearchBackendKind::Scalar);
+        assert!(Arc::ptr_eq(&worker.stopped, &parent.stopped));
+        assert!(Arc::ptr_eq(&worker.pondering, &parent.pondering));
+        assert!(Arc::ptr_eq(&worker.shared_tt, &parent.shared_tt));
+        assert_eq!(worker.syzygy.is_loaded(), parent.syzygy.is_loaded());
+        assert_eq!(worker.nnue_net.is_some(), parent.nnue_net.is_some());
+        assert_eq!(worker.classic_net.is_some(), parent.classic_net.is_some());
+        if let Some(net) = parent.ember_v2_net.as_ref() {
+            assert!(Arc::ptr_eq(worker.ember_v2_net.as_ref().unwrap(), net));
+            assert!(!worker.ember_v2_stack.is_empty());
+        }
+        assert_eq!(worker.history[12][28], 2_600);
+        assert_eq!(worker.corr_hist[123], 320);
+
+        // A later warm dispatch must also remove a previously installed network.
+        parent.ember_v2_net = None;
+        parent.nnue_net = None;
+        parent.classic_net = None;
+        LazySmpRootContext::from_searcher(&parent, false).prepare_worker(
+            &mut worker,
+            Arc::clone(&parent.shared_tt),
+            Arc::clone(&parent.stopped),
+            &st,
+            false,
+        );
+        assert!(worker.ember_v2_net.is_none());
+        assert!(worker.ember_v2_stack.is_empty());
+        assert!(worker.nnue_net.is_none());
+        assert!(worker.classic_net.is_none());
+    }
+
+    fn dispatch(pool: &LazySmpPool, st: BoardState, parent: &Searcher, count: usize) -> bool {
+        let _guard = pool.search_lock.lock().unwrap();
+        let include_learning = pool.ensure_workers(count);
+        let context = LazySmpRootContext::from_searcher(parent, include_learning);
+        assert_eq!(context.learning.is_some(), include_learning);
+        let start = Instant::now();
+        let job = Arc::new(LazySmpSearchJob {
+            shared_tt: Arc::clone(&parent.shared_tt),
+            stopped: Arc::clone(&parent.stopped),
+            st,
+            root_moves: Arc::new(generate_moves(&st, st.w, &st.cr, st.ep)),
+            num_threads: count,
+            limits: LazySmpSearchLimits {
+                soft_time: f64::INFINITY,
+                hard_time: f64::INFINITY,
+                depth: 0,
+                node_limit: None,
+                start,
+            },
+            root_context: Arc::new(context),
+            start,
+            global_best_depth: Arc::new(AtomicI32::new(0)),
+            printed_depth: Arc::new(AtomicI32::new(0)),
+            global_nodes: Arc::new(AtomicU64::new(0)),
+            node_limit_counter: None,
+            worker_best_moves: (0..count).map(|_| AtomicU64::new(0)).collect(),
+            worker_depths: (0..count).map(|_| AtomicI32::new(0)).collect(),
+        });
+        let (tx, rx) = mpsc::channel();
+        {
+            let workers = pool.workers.lock().unwrap();
+            for worker in workers.iter().take(count) {
+                worker
+                    .command_tx
+                    .send(LazySmpWorkerCommand::Search {
+                        job: Arc::clone(&job),
+                        result_tx: tx.clone(),
+                    })
+                    .unwrap();
+            }
+        }
+        drop(tx);
+        for _ in 0..count {
+            let result = rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("worker completed initialization");
+            assert_eq!((result.depth, result.nodes), (0, 0));
+        }
+        include_learning
+    }
+
+    fn finish_worker(pool: &LazySmpPool, index: usize) {
+        {
+            let workers = pool.workers.lock().unwrap();
+            workers[index]
+                .command_tx
+                .send(LazySmpWorkerCommand::Shutdown)
+                .unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let finished = pool.workers.lock().unwrap()[index]
+                .handle
+                .as_ref()
+                .unwrap()
+                .is_finished();
+            if finished {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "controlled worker shutdown timed out"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // Keep the finished handle in the pool for ensure_workers to replace/join.
+    }
+
+    #[test]
+    fn lazy_smp_pool_reports_creation_growth_and_replacement_on_dispatch() {
+        let (st, parent) = root();
+        let pool = LazySmpPool::new();
+        assert!(dispatch(&pool, st, &parent, 2));
+        let first = pool.worker_ids();
+        assert!(!dispatch(&pool, st, &parent, 2));
+        assert_eq!(pool.worker_ids(), first);
+        assert!(dispatch(&pool, st, &parent, 3));
+        let grown = pool.worker_ids();
+        assert_eq!(&grown[..2], &first);
+        assert!(!dispatch(&pool, st, &parent, 1));
+        assert!(!dispatch(&pool, st, &parent, 3));
+        assert_eq!(pool.worker_ids(), grown);
+        pool.clear_learning();
+        assert!(!dispatch(&pool, st, &parent, 3));
+
+        finish_worker(&pool, 0);
+        assert!(dispatch(&pool, st, &parent, 3));
+        let replaced = pool.worker_ids();
+        assert_ne!(replaced[0], grown[0]);
+        assert_eq!(&replaced[1..], &grown[1..]);
+        assert!(!dispatch(&pool, st, &parent, 3));
+
+        finish_worker(&pool, 2);
+        assert!(!dispatch(&pool, st, &parent, 1));
+        assert!(dispatch(&pool, st, &parent, 3));
+        let reactivated = pool.worker_ids();
+        assert_eq!(&reactivated[..2], &replaced[..2]);
+        assert_ne!(reactivated[2], replaced[2]);
+        assert!(!dispatch(&pool, st, &parent, 3));
+    }
+
+    #[test]
+    fn lazy_smp_replacement_leader_imports_current_root_learning() {
+        let (st, mut parent) = root();
+        let pool = LazySmpPool::new();
+        let moves = generate_moves(&st, st.w, &st.cr, st.ep);
+        for value in [1_600, 8_000] {
+            seed(&mut parent, value);
+            let (_, mut expected) = root();
+            expected.import_learning(&parent.export_learning());
+            expected.prepare_for_search();
+            pool.search(
+                Arc::clone(&parent.shared_tt),
+                &st,
+                &moves,
+                LazySmpSearchLimits {
+                    soft_time: f64::INFINITY,
+                    hard_time: f64::INFINITY,
+                    depth: 0,
+                    node_limit: None,
+                    start: Instant::now(),
+                },
+                2,
+                &mut parent,
+            );
+            assert_learning(&parent.export_learning(), &expected);
+            finish_worker(&pool, 0);
+        }
+    }
+
+    #[test]
+    #[ignore = "isolated release pool-dispatch timing; run serially on idle hardware"]
+    fn lazy_smp_dispatch_cost() {
+        crate::evaluate::init_embedded_nnue().unwrap();
+        let (st, mut parent) = root();
+        let tt = Arc::new(SharedTT::new(1));
+        parent.shared_tt = Arc::clone(&tt);
+        parent.tt_mb = 1;
+        let moves = generate_moves(&st, st.w, &st.cr, st.ep);
+        for threads in [1, 2, 4, 8, 12] {
+            for mode in ["warm", "cold", "growth", "replacement"] {
+                if mode == "growth" && threads == 1 {
+                    continue;
+                }
+                let mut pool = LazySmpPool::new();
+                let mut samples = Vec::new();
+                for _ in 0..100 {
+                    if mode == "cold" {
+                        pool = LazySmpPool::new();
+                    }
+                    let warm_threads = if mode == "growth" {
+                        threads - 1
+                    } else {
+                        threads
+                    };
+                    if mode != "cold" {
+                        parent.stopped.store(false, Ordering::Relaxed);
+                        pool.search(
+                            Arc::clone(&tt),
+                            &st,
+                            &moves,
+                            LazySmpSearchLimits {
+                                soft_time: f64::INFINITY,
+                                hard_time: f64::INFINITY,
+                                depth: 0,
+                                node_limit: None,
+                                start: Instant::now(),
+                            },
+                            warm_threads,
+                            &mut parent,
+                        );
+                    }
+                    if mode == "replacement" {
+                        finish_worker(&pool, 0);
+                    }
+                    // Restore equivalent learning outside each measured dispatch.
+                    pool.clear_learning();
+                    parent.clear_learning();
+                    seed(&mut parent, 1_600);
+                    let start = Instant::now();
+                    let result = pool.search(
+                        Arc::clone(&tt),
+                        &st,
+                        &moves,
+                        LazySmpSearchLimits {
+                            soft_time: f64::INFINITY,
+                            hard_time: f64::INFINITY,
+                            depth: 0,
+                            node_limit: None,
+                            start,
+                        },
+                        threads,
+                        &mut parent,
+                    );
+                    let elapsed = start.elapsed().as_nanos();
+                    assert_eq!((result.2, result.3), (0, 0));
+                    samples.push(elapsed);
+                    if mode == "growth" {
+                        pool = LazySmpPool::new();
+                    }
+                }
+                samples.sort_unstable();
+                println!("dispatch_cost threads={threads} mode={mode} samples=100 p10_ns={} median_ns={} p90_ns={}", samples[10], samples[50], samples[90]);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "isolated release context-construction timing; run serially on idle hardware"]
+    fn lazy_smp_context_construction_cost() {
+        crate::evaluate::init_embedded_nnue().unwrap();
+        let (_, mut parent) = root();
+        seed(&mut parent, 1_600);
+        for include_learning in [false, true] {
+            for _ in 0..100 {
+                std::hint::black_box(LazySmpRootContext::from_searcher(&parent, include_learning));
+            }
+            let start = Instant::now();
+            for _ in 0..10_000 {
+                std::hint::black_box(LazySmpRootContext::from_searcher(
+                    std::hint::black_box(&parent),
+                    include_learning,
+                ));
+            }
+            println!(
+                "context_cost include_learning={include_learning} samples=10000 ns_per_context={}",
+                start.elapsed().as_nanos() / 10_000
+            );
+        }
+    }
 }
