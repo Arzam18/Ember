@@ -170,6 +170,10 @@ the shared handler; `readyok` alone does not prove that an option was recognized
 stdout and stderr independently and collect both streams before asserting diagnostics,
 because they have no shared ordering guarantee.
 
+Use untimed fixed-depth searches when a regression observes routing into search
+through node accounting. A tiny clock can expire before the first node and hide
+the routing result; reserve clocked searches for explicit timing contracts.
+
 The fast fixture test validates the TSV schema, numeric fields, and cross-file ID uniqueness.
 The ignored in-process release fixture test runs every active hard-layer case from
 `engine_regressions.tsv`. Soft active cases are judged by the two-binary fixture gate, which
@@ -319,6 +323,12 @@ relevant ones; do not use one as a proxy for another.
 Use `tools/benchmark_search.py` for throughput and
 `nix run .#search-shape-benchmark` for depth, nodes, elapsed time, and tree-shape changes.
 Disable the opening book unless book behavior is the subject of the test.
+
+Before selecting a performance metric, locate the changed work relative to its timer
+boundaries. Work after iteration telemetry or elapsed-time capture requires an outer
+search-call timer or warmed `go`-to-`bestmove` latency. Use isolated counters or timings to
+prove the removed operation, and report whole-search effects separately when they are
+smaller than measurement noise.
 
 For Syzygy throughput comparisons, choose roots that enter tablebases inside the search:
 an eligible root can return immediately with zero nodes, which has no meaningful NPS.
