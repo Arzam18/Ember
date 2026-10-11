@@ -299,16 +299,6 @@ cargo run --release
 cargo build --release
 ```
 
-The correction-learning experiments are opt-in Cargo features:
-`correction-gravity` (bounded depth-weighted gravity updates, at most 16 cp per applied
-step) and `node-correction-training` (descendants stage their residuals per pawn slot,
-deepest first, and the table is updated only at iteration or search boundaries, so a
-running search never observes its own writes). An earlier revision of this combined
-policy failed its playing-strength gate and was excluded from default builds; the
-redesigned policy stays opt-in until its own gate run. To evaluate it, use
-`cargo build --release --features correction-gravity,node-correction-training`.
-`--all-features` also enables these experiments; use the default build for normal play.
-
 ## 🤝 Contributing
 
 Found a bug or have an idea? Open an issue or PR — help and feedback are welcome.
