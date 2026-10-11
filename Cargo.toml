@@ -34,6 +34,9 @@ decision-trace = []
 mimalloc = ["dep:mimalloc"]
 search-debug = []
 search-perf = []
+# Experimental learning policies; excluded from default builds.
+correction-gravity = []
+node-correction-training = []
  
 [profile.release]
 opt-level = 3

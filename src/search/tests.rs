@@ -2044,6 +2044,7 @@ fn correction_history_searcher(v2: bool) -> Searcher {
 }
 
 #[test]
+#[cfg(feature = "correction-gravity")]
 fn correction_history_cached_update_matches_fresh_arithmetic_and_modes() {
     // Private cached-helper contract: compare complete correction tables and
     // arithmetic boundaries, not a chosen root move (which TSV would observe).
@@ -2299,17 +2300,22 @@ fn correction_history_reaches_static_eval_and_matches_corrected_eval() {
             searcher.corr_hist[idx] = seed;
             assert_eq!(corrected, base + seed);
             searcher.update_correction_history(&st, base, 3);
-            // Residual -100 at depth 3: bonus = -100*4*10/55 = -72, gravity
+            let expected_slot = if cfg!(feature = "correction-gravity") {
+                21
+            } else {
+                92
+            };
+            // Gravity residual -100 at depth 3: bonus = -100*4*10/55 = -72, gravity
             // term = 100*72/1024 = 7, so the slot becomes 100 - 72 - 7 = 21.
             assert_eq!(
-                searcher.corr_hist[idx], 21,
+                searcher.corr_hist[idx], expected_slot,
                 "training must target the corrected residual: v2={v2} chess960={chess960} \
                  white={white}"
             );
-            assert_eq!(searcher.corrected_eval(&st), base + 21);
+            assert_eq!(searcher.corrected_eval(&st), base + expected_slot);
             assert_eq!(
                 correction_eval_static(&searcher, &st, v2, chess960),
-                base + 21,
+                base + expected_slot,
                 "static eval must follow the trained slot: v2={v2} chess960={chess960} \
                  white={white}"
             );
@@ -2348,6 +2354,7 @@ fn correction_history_reads_clamp_at_200() {
 }
 
 #[test]
+#[cfg(feature = "correction-gravity")]
 fn correction_history_gravity_depth_weight_and_tune_overrides() {
     // Private integrator contract: depth weighting, cap saturation, gravity
     // convergence, and tune overrides are invisible to a move fixture.
@@ -2413,6 +2420,7 @@ fn correction_history_gravity_depth_weight_and_tune_overrides() {
 }
 
 #[test]
+#[cfg(feature = "correction-gravity")]
 fn correction_history_tuning_boundaries_use_wide_arithmetic() {
     // Private cached-update arithmetic: a TSV cannot observe the complete
     // table or isolate gravity from the correction used to read this position.
@@ -2466,6 +2474,7 @@ fn correction_history_tuning_boundaries_use_wide_arithmetic() {
 }
 
 #[test]
+#[cfg(feature = "node-correction-training")]
 fn correction_history_node_gate_matrix() {
     // Private exit-gate contract: bound direction, check, and verification
     // contexts determine table writes independently of a chosen root move.
@@ -2615,7 +2624,13 @@ fn correction_history_node_gate_matrix() {
         if case.expect_train {
             assert_eq!(
                 searcher.corr_hist[corr_idx(compute_pawn_hash(&st), st.w)],
-                case.expect_slot,
+                if cfg!(feature = "correction-gravity") {
+                    case.expect_slot
+                } else if case.score > ev {
+                    45
+                } else {
+                    29
+                },
                 "case {} must write the trained slot",
                 case.name
             );
@@ -2762,6 +2777,7 @@ fn correction_history_update_cost_report() {
 
 #[test]
 #[cfg(feature = "search-debug")]
+#[cfg(feature = "node-correction-training")]
 fn rejected_probcut_proofs_do_not_train_correction_history() {
     // Private speculative-context contract: an actual negamax proof and its
     // descendants must not write correction slots. Other pre-existing learning
@@ -2797,6 +2813,7 @@ fn rejected_probcut_proofs_do_not_train_correction_history() {
 }
 
 #[test]
+#[cfg(feature = "node-correction-training")]
 fn descendant_correction_can_reverse_the_final_root_residual() {
     // Private residual contract: two quiet plies retain the root's pawn/side
     // key, so training the descendant invalidates a cached corrected root eval.
@@ -2822,17 +2839,19 @@ fn descendant_correction_can_reverse_the_final_root_residual() {
         searcher.debug.disable_corr_node_train = false;
     }
     let initial_eval = searcher.corrected_eval(&root);
-    let descendant_eval = searcher.corrected_eval(&descendant);
-    assert!(searcher.train_correction_from_node(
-        &descendant,
-        descendant_eval + 200,
-        5,
-        descendant_eval,
-        TT_EXACT,
-        false,
-        false,
-        true
-    ));
+    for _ in 0..8 {
+        let descendant_eval = searcher.corrected_eval(&descendant);
+        assert!(searcher.train_correction_from_node(
+            &descendant,
+            descendant_eval + 200,
+            5,
+            descendant_eval,
+            TT_EXACT,
+            false,
+            false,
+            true
+        ));
+    }
     let fresh_eval = searcher.corrected_eval(&root);
     let final_score = initial_eval + (fresh_eval - initial_eval) / 2;
     assert!(final_score > initial_eval && final_score < fresh_eval);
@@ -2855,6 +2874,7 @@ fn descendant_correction_can_reverse_the_final_root_residual() {
 
 #[test]
 #[cfg(feature = "search-debug")]
+#[cfg(feature = "node-correction-training")]
 fn rejected_zero_window_probcut_proof_preserves_correction_slots() {
     // Private proof contract: exercise the production full-proof window and
     // flag with a rejected score; bypass early pruning to reach eligible exits.
@@ -2876,4 +2896,41 @@ fn rejected_zero_window_probcut_proof_preserves_correction_slots() {
     assert!(stats.corr_node_reject_verification > 0, "{stats:?}");
     assert_eq!(stats.corr_node_trains, 0);
     assert_eq!(searcher.corr_hist, before);
+}
+
+#[test]
+#[cfg(not(feature = "correction-gravity"))]
+fn correction_history_default_integrator_keeps_legacy_boundaries() {
+    // Private cached-helper contract: exact legacy slots and complete table
+    // isolation when gravity is compiled out, including residual/depth gates.
+    let st = Engine::new().st;
+    let idx = corr_idx(compute_pawn_hash(&st), st.w);
+    for (old, residual, depth, expected) in [
+        (0, 7, 3, 0),
+        (0, -7, 3, 0),
+        (0, 8, 3, 1),
+        (0, -8, 3, -1),
+        (0, 63, 3, 7),
+        (0, -63, 3, -7),
+        (0, 64, 3, 8),
+        (0, -64, 3, -8),
+        (1023, 64, 3, 1024),
+        (-1023, -64, 3, -1024),
+        (100, -100, 3, 92),
+        (0, 499, 3, 8),
+        (0, 500, 3, 0),
+        (0, 64, 2, 0),
+    ] {
+        let mut cached = correction_history_searcher(false);
+        let mut fresh = correction_history_searcher(false);
+        cached.corr_hist[idx] = old;
+        fresh.corr_hist = cached.corr_hist;
+        let eval = cached.corrected_eval(&st);
+        let mut table = cached.corr_hist;
+        table[idx] = expected;
+        cached.update_correction_history_with_eval(&st, eval + residual, depth, Some(eval));
+        fresh.update_correction_history(&st, eval + residual, depth);
+        assert_eq!(cached.corr_hist, table);
+        assert_eq!(fresh.corr_hist, table);
+    }
 }

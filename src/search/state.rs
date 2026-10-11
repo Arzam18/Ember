@@ -1290,8 +1290,8 @@ impl Searcher {
     }
 
     // Node training uses its entry evaluation as the residual's reference.
-    // Final root training must use the fresh public wrapper: descendants can
-    // share the root's correction slot, and SMP imports further learning.
+    // Root callers must use a fresh evaluation when descendant training can
+    // share the root's correction slot, or after SMP imports further learning.
     // Returns true when this call wrote the correction table.
     pub(crate) fn update_correction_history_with_eval(
         &mut self,
@@ -1314,28 +1314,40 @@ impl Searcher {
         {
             self.debug.stats.corr_last_update = Some((idx, self.corr_hist[idx], ev, score, depth));
         }
-        // Depth-weighted full-error bonus with gravity decay. Deeper
-        // searches contribute more (their scores are more trustworthy),
-        // the raw error is not pre-clamped so a deep large error earns
-        // the capped full bonus, and the gravity term shrinks every step
-        // as the slot approaches the limit so repeated same-sign errors
-        // converge to +/-LIMIT instead of integrating linearly. Defaults
-        // reproduce the reference scheme: bonus = err * min(depth+1, 16)
-        // * 10/55 capped at LIMIT * 10/38, gravity = old + bonus -
-        // old*|bonus|/LIMIT.
-        // Keep every intermediate wide: accepted Tune values can make
-        // both the cap product and old * |bonus| exceed i32.
-        let limit = tune::get_int(TuneParam::CorrGravityLimit, 1024).clamp(1, 32768);
-        let cap = (limit * tune::get_int(TuneParam::CorrBonusCapPermille, 263).clamp(0, 1_000_000))
-            / 1000;
-        let depth_cap = tune::get_int(TuneParam::CorrDepthCap, 16).clamp(1, 1024);
-        let scale = (i64::from(depth) + 1).clamp(1, depth_cap);
-        let den = tune::get_int(TuneParam::CorrWeightDen, 55).clamp(1, 1_000_000);
-        let num = tune::get_int(TuneParam::CorrWeightNum, 10).clamp(-1_000_000, 1_000_000);
-        let scaled = diff * scale * num / den;
-        let bonus = scaled.clamp(-cap, cap);
-        let old = i64::from(self.corr_hist[idx]);
-        self.corr_hist[idx] = (old + bonus - old * bonus.abs() / limit).clamp(-limit, limit) as i32;
+        #[cfg(not(feature = "correction-gravity"))]
+        {
+            // Preserve the established root integrator until the gravity
+            // experiment has independent playing-strength support.
+            let old = i64::from(self.corr_hist[idx]);
+            self.corr_hist[idx] = (old + diff.clamp(-64, 64) / 8).clamp(-1024, 1024) as i32;
+        }
+        #[cfg(feature = "correction-gravity")]
+        {
+            // Depth-weighted full-error bonus with gravity decay. Deeper
+            // searches contribute more (their scores are more trustworthy),
+            // the raw error is not pre-clamped so a deep large error earns
+            // the capped full bonus, and the gravity term shrinks every step
+            // as the slot approaches the limit so repeated same-sign errors
+            // converge to +/-LIMIT instead of integrating linearly. Defaults
+            // reproduce the reference scheme: bonus = err * min(depth+1, 16)
+            // * 10/55 capped at LIMIT * 10/38, gravity = old + bonus -
+            // old*|bonus|/LIMIT.
+            // Keep every intermediate wide: accepted Tune values can make
+            // both the cap product and old * |bonus| exceed i32.
+            let limit = tune::get_int(TuneParam::CorrGravityLimit, 1024).clamp(1, 32768);
+            let cap = (limit
+                * tune::get_int(TuneParam::CorrBonusCapPermille, 263).clamp(0, 1_000_000))
+                / 1000;
+            let depth_cap = tune::get_int(TuneParam::CorrDepthCap, 16).clamp(1, 1024);
+            let scale = (i64::from(depth) + 1).clamp(1, depth_cap);
+            let den = tune::get_int(TuneParam::CorrWeightDen, 55).clamp(1, 1_000_000);
+            let num = tune::get_int(TuneParam::CorrWeightNum, 10).clamp(-1_000_000, 1_000_000);
+            let scaled = diff * scale * num / den;
+            let bonus = scaled.clamp(-cap, cap);
+            let old = i64::from(self.corr_hist[idx]);
+            self.corr_hist[idx] =
+                (old + bonus - old * bonus.abs() / limit).clamp(-limit, limit) as i32;
+        }
         true
     }
 

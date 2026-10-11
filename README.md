@@ -299,6 +299,13 @@ cargo run --release
 cargo build --release
 ```
 
+The correction-learning experiments are opt-in Cargo features:
+`correction-gravity` (depth-weighted gravity updates) and
+`node-correction-training` (training at completed search nodes). The combined policy
+failed its playing-strength gate and is excluded from default builds. To evaluate it,
+use `cargo build --release --features correction-gravity,node-correction-training`.
+`--all-features` also enables these experiments; use the default build for normal play.
+
 ## 🤝 Contributing
 
 Found a bug or have an idea? Open an issue or PR — help and feedback are welcome.

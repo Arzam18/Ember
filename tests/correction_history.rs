@@ -23,6 +23,7 @@ impl Drop for RestoreNetwork {
 }
 
 #[test]
+#[cfg(any(not(feature = "node-correction-training"), feature = "search-debug"))]
 fn correction_history_engine_callers_match_fresh_root_training() {
     use ember_chess::{evaluate, search::Searcher, tt::SharedTT};
     use std::sync::{atomic::AtomicBool, Arc};
@@ -98,7 +99,7 @@ fn correction_history_engine_callers_match_fresh_root_training() {
 }
 
 #[test]
-#[cfg(feature = "search-debug")]
+#[cfg(all(feature = "search-debug", feature = "node-correction-training"))]
 fn correction_history_trains_at_child_nodes() {
     use ember_chess::{evaluate, search::Searcher, tt::SharedTT};
     use std::sync::{atomic::AtomicBool, Arc};
@@ -172,15 +173,21 @@ fn correction_history_public_updater_observes_successive_training() {
         .filter(|(a, b)| **a != *b)
         .collect();
     assert_eq!(changes.len(), 1);
-    // Depth-3 arithmetic with default constants: residual 64 gives bonus
+    // Gravity's depth-3 arithmetic: residual 64 gives bonus
     // 64*4*10/55 = 46 and gravity 100*46/1024 = 4, so the first update lands
     // at 142; the second sees residual 22, bonus 16, gravity 2 -> 156.
-    assert_eq!(*changes[0].0, 142);
-    assert_eq!(changes[0].1, 156);
+    // The default integrator adds 8 and then 7, yielding 108 and 115.
+    let (first_slot, second_slot) = if cfg!(feature = "correction-gravity") {
+        (142, 156)
+    } else {
+        (108, 115)
+    };
+    assert_eq!(*changes[0].0, first_slot);
+    assert_eq!(changes[0].1, second_slot);
 }
 
 #[test]
-#[cfg(feature = "search-debug")]
+#[cfg(all(feature = "search-debug", feature = "node-correction-training"))]
 fn final_root_training_observes_descendant_corrections_in_single_and_multi_pv() {
     use ember_chess::{evaluate, search::Searcher, tt::SharedTT};
     use std::sync::{atomic::AtomicBool, Arc};

@@ -1132,10 +1132,18 @@ impl Engine {
             self.root_fifty_move_conversion_choice(&ordered_moves, best_move, best_score);
         let mv_str = move_to_uci(&self.st, best_move);
         let elapsed = start.elapsed().as_secs_f64();
-        // Descendants can train the root's pawn/side correction slot even
-        // though root moves restore the board. Read the current correction.
-        self.searcher
-            .update_correction_history(&self.st, best_score, best_depth);
+        // Descendant training can change the root's pawn/side correction slot.
+        // Reuse init_eval only when that training is compiled out entirely.
+        self.searcher.update_correction_history_with_eval(
+            &self.st,
+            best_score,
+            best_depth,
+            if cfg!(feature = "node-correction-training") {
+                None
+            } else {
+                Some(init_eval)
+            },
+        );
         self.searcher.clear_node_limit();
         #[cfg(feature = "decision-trace")]
         self.trace.emit_decision(DecisionTrace {
@@ -1372,9 +1380,17 @@ impl Engine {
             self.root_fifty_move_conversion_choice(ordered_moves, best_move, best_score);
         let mv_str = move_to_uci(&self.st, best_move);
         let elapsed = start.elapsed().as_secs_f64();
-        // MultiPV descendants can also change the root correction slot.
-        self.searcher
-            .update_correction_history(&self.st, best_score, best_depth);
+        // MultiPV has the same descendant-learning dependency as single-PV.
+        self.searcher.update_correction_history_with_eval(
+            &self.st,
+            best_score,
+            best_depth,
+            if cfg!(feature = "node-correction-training") {
+                None
+            } else {
+                Some(init_eval)
+            },
+        );
         self.searcher.clear_node_limit();
         #[cfg(feature = "decision-trace")]
         {

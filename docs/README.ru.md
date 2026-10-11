@@ -311,6 +311,13 @@ cargo run --release
 cargo build --release
 ```
 
+Эксперименты с обучением correction включаются Cargo-фичами:
+`correction-gravity` (gravity-обновления с весом по глубине) и
+`node-correction-training` (обучение на завершённых узлах поиска). Совместная политика
+не прошла проверку игровой силы и исключена из сборок по умолчанию. Для её оценки
+используйте `cargo build --release --features correction-gravity,node-correction-training`.
+`--all-features` также включает эти эксперименты; для обычной игры используйте сборку по умолчанию.
+
 ## 🤝 Вклад
 
 Нашёлся баг? Есть идея? Открывайте issue или PR — буду рад помощи и обратной связи!

@@ -981,6 +981,7 @@ macro_rules! negamax_mode_body {
         let orig_alpha = $alpha;
         let mut best_score = -INF;
         let mut best_move = None;
+        #[cfg(feature = "node-correction-training")]
         let mut corr_best_quiet: Option<Move> = None;
         let mut legal_moves_seen = 0usize;
         let mut quiets_tried = Self::take_buf(&mut $this.quiets_bufs, $ply);
@@ -1262,7 +1263,10 @@ macro_rules! negamax_mode_body {
             if s > best_score {
                 best_score = s;
                 best_move = Some(mv);
-                corr_best_quiet = if is_quiet { Some(mv) } else { None };
+                #[cfg(feature = "node-correction-training")]
+                {
+                    corr_best_quiet = if is_quiet { Some(mv) } else { None };
+                }
                 if s > $alpha {
                     $alpha = s;
                     if $alpha >= beta {
@@ -1361,24 +1365,28 @@ macro_rules! negamax_mode_body {
         // status of the best-scoring move while the loop knows it, then hand
         // that to the gate (capture/promotion classification needs the
         // const-generic variant this plain method cannot name).
-        let corr_quiet = best_move.is_some_and(|mv| Some(mv) == corr_best_quiet);
-        $this.train_correction_from_node(
-            $st,
-            best_score,
-            actual_depth,
-            eval_score,
-            flag,
-            in_check,
-            excluded_move.is_some()
-                || $this.restricted_verification_active()
-                || $this.probcut_verification,
-            corr_quiet,
-        );
+        #[cfg(feature = "node-correction-training")]
+        {
+            let corr_quiet = best_move.is_some_and(|mv| Some(mv) == corr_best_quiet);
+            $this.train_correction_from_node(
+                $st,
+                best_score,
+                actual_depth,
+                eval_score,
+                flag,
+                in_check,
+                excluded_move.is_some()
+                    || $this.restricted_verification_active()
+                    || $this.probcut_verification,
+                corr_quiet,
+            );
+        }
         best_score
     }};
 }
 
 impl Searcher {
+    #[cfg(feature = "node-correction-training")]
     #[allow(clippy::too_many_arguments)]
     pub(super) fn train_correction_from_node(
         &mut self,
