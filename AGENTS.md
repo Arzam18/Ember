@@ -345,6 +345,11 @@ Use at least three repeats for meaningful before/after measurements. If the delt
 to run-to-run noise, rerun rather than declaring a regression or improvement. CI's quick NPS
 job is a smoke test, not an Elo or performance proof.
 
+For persistent-worker setup changes, measure repeated searches in the same process and
+pool after warming the requested worker count. One-search-per-process benchmarks measure
+cold setup only. Measure creation, growth, and replacement separately, and restore equivalent
+learning outside isolated timing windows so retained state does not confound setup costs.
+
 For selective-search heuristics, instrument candidate eligibility and the complete outcome
 before tuning thresholds. Record the context, verification cost, resulting action, and a
 stable position identifier, then label a representative sample with a deeper independent

@@ -190,6 +190,94 @@ fn search_learning_is_aged_between_moves_and_cleared_between_games() {
     assert_eq!(searcher.corr_hist[123], 0);
 }
 
+fn seed_lazy_smp_learning(searcher: &mut Searcher, value: i32) {
+    searcher.clear_learning();
+    searcher.history[12][28] = value;
+    searcher.history[63][0] = -value;
+    searcher.corr_hist[123] = value / 10;
+    searcher.corr_hist[456] = -value / 10;
+    searcher.counter_move[7][31] = Some(encode_move(6, 0, 5, 0, 0));
+}
+
+fn assert_lazy_smp_learning_eq(actual: &Searcher, expected: &Searcher) {
+    assert_eq!(actual.history, expected.history);
+    assert_eq!(actual.corr_hist, expected.corr_hist);
+    assert_eq!(actual.counter_move, expected.counter_move);
+}
+
+fn lazy_smp_depth_zero(pool: &LazySmpPool, root: &mut Searcher, threads: usize) {
+    // The position supplies legal root moves; the contract is learning lifecycle
+    // with no search/training nodes, which a TSV move assertion cannot express.
+    let st = state_from_fen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
+    let moves = generate_moves(&st, st.w, &st.cr, st.ep);
+    let (mv, score, depth, nodes) = pool.search(
+        Arc::clone(&root.shared_tt),
+        &st,
+        &moves,
+        LazySmpSearchLimits {
+            soft_time: f64::INFINITY,
+            hard_time: f64::INFINITY,
+            depth: 0,
+            node_limit: None,
+            start: Instant::now(),
+        },
+        threads,
+        root,
+    );
+    assert!(moves.contains(&mv));
+    assert_eq!((score, depth, nodes), (0, 0, 0));
+}
+
+#[test]
+fn lazy_smp_retains_leader_learning_across_growth_and_reactivation() {
+    let pool = LazySmpPool::new();
+    let tt = Arc::new(SharedTT::new(1));
+    let mut root = Searcher::new(Arc::clone(&tt), Arc::new(AtomicBool::new(false)));
+    let mut expected = Searcher::new(tt, Arc::new(AtomicBool::new(false)));
+    seed_lazy_smp_learning(&mut root, 1_600);
+    expected.import_learning(&root.export_learning());
+
+    for (index, threads) in [2, 2, 4, 1, 4].into_iter().enumerate() {
+        if index > 0 {
+            seed_lazy_smp_learning(&mut root, 8_000 + index as i32 * 100);
+        }
+        expected.prepare_for_search();
+        lazy_smp_depth_zero(&pool, &mut root, threads);
+        assert_lazy_smp_learning_eq(&root, &expected);
+    }
+
+    pool.clear_learning();
+    expected.clear_learning();
+    for threads in [1, 4] {
+        seed_lazy_smp_learning(&mut root, 12_000);
+        expected.prepare_for_search();
+        lazy_smp_depth_zero(&pool, &mut root, threads);
+        assert_lazy_smp_learning_eq(&root, &expected);
+    }
+}
+
+#[test]
+fn lazy_smp_stopped_first_dispatch_still_initializes_learning() {
+    let pool = LazySmpPool::new();
+    let tt = Arc::new(SharedTT::new(1));
+    let mut root = Searcher::new(Arc::clone(&tt), Arc::new(AtomicBool::new(true)));
+    let mut expected = Searcher::new(tt, Arc::new(AtomicBool::new(false)));
+    seed_lazy_smp_learning(&mut root, 1_600);
+    expected.import_learning(&root.export_learning());
+    expected.prepare_for_search();
+    lazy_smp_depth_zero(&pool, &mut root, 2);
+    assert_lazy_smp_learning_eq(&root, &expected);
+    assert_eq!(root.history[12][28], 1_300);
+    assert!(root.stopped.load(Ordering::Relaxed));
+
+    root.stopped = Arc::new(AtomicBool::new(false));
+    seed_lazy_smp_learning(&mut root, 9_600);
+    expected.prepare_for_search();
+    lazy_smp_depth_zero(&pool, &mut root, 2);
+    assert_lazy_smp_learning_eq(&root, &expected);
+    assert!(!root.stopped.load(Ordering::Relaxed));
+}
+
 #[test]
 fn lazy_smp_honors_the_root_searcher_stop_token() {
     let st = state_from_fen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
