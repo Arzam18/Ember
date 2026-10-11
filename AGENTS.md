@@ -255,6 +255,12 @@ a subtly different command.
 Every bug fix should have a regression at the narrowest useful layer. A regression proves
 the causal invariant, not just that the final game happens to end differently.
 
+An unchanged board does not make a corrected evaluation reusable across search.
+Descendants can share its pawn/side correction slot. Final training must read the current
+correction, and regressions must enable descendant learning in every root search mode.
+Use wide intermediates over the entire accepted tuning range, and round-trip every tuning
+parameter through set/get/list so new enum variants cannot outgrow or shift the mapping.
+
 When a Python test compares exact file or archive bytes, create its fixture with
 `Path.write_bytes`. Text-mode writes translate newlines on Windows and can change the
 bytes the test meant to verify.

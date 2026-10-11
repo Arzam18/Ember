@@ -1132,14 +1132,10 @@ impl Engine {
             self.root_fifty_move_conversion_choice(&ordered_moves, best_move, best_score);
         let mv_str = move_to_uci(&self.st, best_move);
         let elapsed = start.elapsed().as_secs_f64();
-        // Root moves restore the board, and this non-SMP loop does not train
-        // correction history or replace evaluation configuration before here.
-        self.searcher.update_correction_history_with_eval(
-            &self.st,
-            best_score,
-            best_depth,
-            Some(init_eval),
-        );
+        // Descendants can train the root's pawn/side correction slot even
+        // though root moves restore the board. Read the current correction.
+        self.searcher
+            .update_correction_history(&self.st, best_score, best_depth);
         self.searcher.clear_node_limit();
         #[cfg(feature = "decision-trace")]
         self.trace.emit_decision(DecisionTrace {
@@ -1376,14 +1372,9 @@ impl Engine {
             self.root_fifty_move_conversion_choice(ordered_moves, best_move, best_score);
         let mv_str = move_to_uci(&self.st, best_move);
         let elapsed = start.elapsed().as_secs_f64();
-        // As in single-PV, root state and correction history are unchanged;
-        // retain the initial corrected evaluation, not the evolving search score.
-        self.searcher.update_correction_history_with_eval(
-            &self.st,
-            best_score,
-            best_depth,
-            Some(init_eval),
-        );
+        // MultiPV descendants can also change the root correction slot.
+        self.searcher
+            .update_correction_history(&self.st, best_score, best_depth);
         self.searcher.clear_node_limit();
         #[cfg(feature = "decision-trace")]
         {

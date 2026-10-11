@@ -2466,6 +2466,170 @@ fn correction_history_tuning_boundaries_use_wide_arithmetic() {
 }
 
 #[test]
+fn correction_history_node_gate_matrix() {
+    // Private exit-gate contract: bound direction, check, and verification
+    // contexts determine table writes independently of a chosen root move.
+    let st = state_from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    let ev = 40;
+    let score = ev + 64;
+    let mut searcher = correction_history_searcher(false);
+
+    struct Case {
+        name: &'static str,
+        best_move_quiet: bool,
+        in_check: bool,
+        verification: bool,
+        flag: u8,
+        depth: i32,
+        score: i32,
+        expect_train: bool,
+        expect_slot: i32,
+    }
+    let cases = [
+        Case {
+            name: "quiet fail-low train",
+            best_move_quiet: true,
+            in_check: false,
+            verification: false,
+            flag: TT_ALPHA,
+            depth: 3,
+            score: ev - 64,
+            expect_train: true,
+            expect_slot: -10,
+        },
+        Case {
+            name: "quiet fail-high train",
+            best_move_quiet: true,
+            in_check: false,
+            verification: false,
+            flag: TT_BETA,
+            depth: 3,
+            score,
+            expect_train: true,
+            expect_slot: 82,
+        },
+        Case {
+            name: "quiet exact train",
+            best_move_quiet: true,
+            in_check: false,
+            verification: false,
+            flag: TT_EXACT,
+            depth: 3,
+            score,
+            expect_train: true,
+            expect_slot: 82,
+        },
+        Case {
+            name: "check node",
+            best_move_quiet: true,
+            in_check: true,
+            verification: false,
+            flag: TT_ALPHA,
+            depth: 3,
+            score: ev - 64,
+            expect_train: false,
+            expect_slot: 0,
+        },
+        Case {
+            name: "verification",
+            best_move_quiet: true,
+            in_check: false,
+            verification: true,
+            flag: TT_ALPHA,
+            depth: 3,
+            score: ev - 64,
+            expect_train: false,
+            expect_slot: 0,
+        },
+        Case {
+            name: "noisy best move",
+            best_move_quiet: false,
+            in_check: false,
+            verification: false,
+            flag: TT_ALPHA,
+            depth: 3,
+            score: ev - 64,
+            expect_train: false,
+            expect_slot: 0,
+        },
+        Case {
+            name: "direction mismatch alpha",
+            best_move_quiet: true,
+            in_check: false,
+            verification: false,
+            flag: TT_ALPHA,
+            depth: 3,
+            score: ev + 1,
+            expect_train: false,
+            expect_slot: 0,
+        },
+        Case {
+            name: "direction mismatch beta",
+            best_move_quiet: true,
+            in_check: false,
+            verification: false,
+            flag: TT_BETA,
+            depth: 3,
+            score: ev - 1,
+            expect_train: false,
+            expect_slot: 0,
+        },
+        Case {
+            name: "mate bound",
+            best_move_quiet: true,
+            in_check: false,
+            verification: false,
+            flag: TT_ALPHA,
+            depth: 3,
+            score: MATE - 4,
+            expect_train: false,
+            expect_slot: 0,
+        },
+        Case {
+            name: "depth below gate",
+            best_move_quiet: true,
+            in_check: false,
+            verification: false,
+            flag: TT_ALPHA,
+            depth: 2,
+            score: ev - 64,
+            expect_train: false,
+            expect_slot: 0,
+        },
+    ];
+    for case in cases {
+        for slot in searcher.corr_hist.iter_mut() {
+            *slot = 37;
+        }
+        let trained = searcher.train_correction_from_node(
+            &st,
+            case.score,
+            case.depth,
+            ev,
+            case.flag,
+            case.in_check,
+            case.verification,
+            case.best_move_quiet,
+        );
+        assert_eq!(trained, case.expect_train, "case {}", case.name);
+        if case.expect_train {
+            assert_eq!(
+                searcher.corr_hist[corr_idx(compute_pawn_hash(&st), st.w)],
+                case.expect_slot,
+                "case {} must write the trained slot",
+                case.name
+            );
+        } else {
+            assert!(
+                searcher.corr_hist.iter().all(|v| *v == 37),
+                "case {} must not write any slot",
+                case.name
+            );
+        }
+    }
+}
+
+#[test]
 #[cfg(feature = "search-debug")]
 fn disabled_correction_history_ignores_the_table_and_training() {
     let st = state_from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
@@ -2594,4 +2758,122 @@ fn correction_history_update_cost_report() {
             nanos[1] / 2000
         );
     }
+}
+
+#[test]
+#[cfg(feature = "search-debug")]
+fn rejected_probcut_proofs_do_not_train_correction_history() {
+    // Private speculative-context contract: an actual negamax proof and its
+    // descendants must not write correction slots. Other pre-existing learning
+    // writes during ProbCut are outside this regression's contract.
+    let root = state_from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    for verification in [false, true] {
+        let mut st = root;
+        let mut searcher = correction_history_searcher(false);
+        searcher.debug.disable_corr_node_train = false;
+        searcher.probcut_verification = verification;
+        let before = searcher.corr_hist;
+        let mut nodes = 0;
+        let score = searcher.negamax(&mut st, 5, 1, -INF, INF, true, &mut nodes);
+        assert!(nodes > 0);
+        let stats = searcher.debug_stats();
+        if verification {
+            assert_eq!(
+                probcut_verdict(score + 1, score + 1, Some(score)),
+                ProbCutVerdict::FullSearchRejected
+            );
+            assert!(stats.corr_node_exits > 0);
+            assert!(stats.corr_node_reject_verification > 0);
+            assert_eq!(stats.corr_node_trains, 0);
+            assert_eq!(searcher.corr_hist, before);
+        } else {
+            assert!(
+                stats.corr_node_trains > 0,
+                "positive control must train: {stats:?}"
+            );
+            assert_ne!(searcher.corr_hist, before);
+        }
+    }
+}
+
+#[test]
+fn descendant_correction_can_reverse_the_final_root_residual() {
+    // Private residual contract: two quiet plies retain the root's pawn/side
+    // key, so training the descendant invalidates a cached corrected root eval.
+    let root = Engine::new().st;
+    let mut descendant = root;
+    for uci in ["g1f3", "g8f6"] {
+        let mv = legal_move(&descendant, uci);
+        apply_move(
+            &mut descendant,
+            move_sr(mv),
+            move_sc(mv),
+            move_er(mv),
+            move_ec(mv),
+            move_promotion(mv),
+        );
+    }
+    assert_eq!(compute_pawn_hash(&root), compute_pawn_hash(&descendant));
+    assert_eq!(root.w, descendant.w);
+    let mut searcher = correction_history_searcher(false);
+    searcher.corr_hist.fill(0);
+    #[cfg(feature = "search-debug")]
+    {
+        searcher.debug.disable_corr_node_train = false;
+    }
+    let initial_eval = searcher.corrected_eval(&root);
+    let descendant_eval = searcher.corrected_eval(&descendant);
+    assert!(searcher.train_correction_from_node(
+        &descendant,
+        descendant_eval + 200,
+        5,
+        descendant_eval,
+        TT_EXACT,
+        false,
+        false,
+        true
+    ));
+    let fresh_eval = searcher.corrected_eval(&root);
+    let final_score = initial_eval + (fresh_eval - initial_eval) / 2;
+    assert!(final_score > initial_eval && final_score < fresh_eval);
+    let before = searcher.corr_hist;
+    let idx = corr_idx(compute_pawn_hash(&root), root.w);
+    assert!(searcher.update_correction_history(&root, final_score, 5));
+    assert!(searcher.corr_hist[idx] < before[idx]);
+    searcher.corr_hist = before;
+    assert!(searcher.update_correction_history_with_eval(
+        &root,
+        final_score,
+        5,
+        Some(initial_eval)
+    ));
+    assert!(
+        searcher.corr_hist[idx] > before[idx],
+        "stale eval would train in the opposite direction"
+    );
+}
+
+#[test]
+#[cfg(feature = "search-debug")]
+fn rejected_zero_window_probcut_proof_preserves_correction_slots() {
+    // Private proof contract: exercise the production full-proof window and
+    // flag with a rejected score; bypass early pruning to reach eligible exits.
+    let mut st = Engine::new().st;
+    let mut searcher = correction_history_searcher(false);
+    searcher.debug.disable_corr_node_train = false;
+    searcher.debug.disable_null_move = true;
+    searcher.debug.disable_reverse_futility = true;
+    searcher.probcut_verification = true;
+    let before = searcher.corr_hist;
+    let mut nodes = 0;
+    let beta = PROBCUT_MARGIN_CP;
+    let score = -searcher.negamax(&mut st, 5, 2, -beta, -beta + 1, false, &mut nodes);
+    assert_eq!(
+        probcut_verdict(beta, beta, Some(score)),
+        ProbCutVerdict::FullSearchRejected
+    );
+    let stats = searcher.debug_stats();
+    assert!(stats.corr_node_reject_verification > 0, "{stats:?}");
+    assert_eq!(stats.corr_node_trains, 0);
+    assert_eq!(searcher.corr_hist, before);
 }
