@@ -72,6 +72,10 @@ convenient result.
   transcript, and successful exit status. Resume only after verifying those
   artifacts against the original inputs and binaries; preserve interrupted
   partial captures separately.
+- A long head-to-head or tuner run pins the runner file's hash in its manifest and
+  aborts when that file changes mid-run. Keep runner edits away from an active run;
+  to change the runner, wait for the run to finish or resume it from a byte-identical
+  copy kept outside the tree.
 - Propagate background output-reader and transcript-write failures to validation callers.
   Keep draining subprocess pipes after a logging failure, reap the process, and reject
   incomplete captures even when the subprocess exits successfully.
