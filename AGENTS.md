@@ -66,6 +66,10 @@ convenient result.
   is hard to compare or reproduce.
 - Identify any uncommitted experiment explicitly in its result directory; a revision name
   alone does not identify a dirty tree.
+- Give each revision its own Cargo target directory for binary comparisons. Shared
+  outputs can reuse another worktree's artifacts when source timestamps move backwards.
+  Audit binary hashes and the engine crate's build transcript before comparing results;
+  a successful Cargo exit alone does not establish the binary's source revision.
 - Preserve raw logs, PGNs, JSON summaries, engine traces, and benchmark output needed to
   audit a conclusion.
 - For long differential comparisons, record each batch invocation, complete
