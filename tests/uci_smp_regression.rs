@@ -94,6 +94,77 @@ fn move_overhead_aliases_reach_the_existing_validator() {
     }
 }
 
+#[test]
+fn correction_tune_parameters_round_trip_in_the_production_uci_process() {
+    // Production option diagnostics and override names are a protocol contract,
+    // not a move fixture. Drain both independent streams before assertions.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ember"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn Ember");
+    let mut stdout_pipe = child.stdout.take().unwrap();
+    let mut stderr_pipe = child.stderr.take().unwrap();
+    let stdout_reader = std::thread::spawn(move || {
+        let mut text = String::new();
+        stdout_pipe.read_to_string(&mut text).unwrap();
+        text
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut text = String::new();
+        stderr_pipe.read_to_string(&mut text).unwrap();
+        text
+    });
+    let names = [
+        "TACTICAL_CHECK_EXTENSION_MAX_DEPTH",
+        "CORR_GRAVITY_LIMIT",
+        "CORR_BONUS_CAP_PERMILLE",
+        "CORR_DEPTH_CAP",
+        "CORR_WEIGHT_NUM",
+        "CORR_WEIGHT_DEN",
+    ];
+    let mut input = String::from("uci\n");
+    for (idx, name) in names.iter().enumerate() {
+        input.push_str(&format!("setoption name Tune value {name}={}\n", 50 + idx));
+    }
+    input.push_str("tune\nisready\nquit\n");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let status = match wait_for_exit(&mut child, UCI_STARTUP_TIMEOUT) {
+        Some(status) => status,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            panic!("Ember did not exit after Tune commands");
+        }
+    };
+    let stdout = stdout_reader.join().unwrap();
+    let stderr = stderr_reader.join().unwrap();
+    assert!(status.success(), "{status}: {stderr}");
+    for (idx, name) in names.iter().enumerate() {
+        assert!(
+            stderr
+                .lines()
+                .any(|line| line == format!("info string Tune {name} = {}", 50 + idx)),
+            "{stderr}"
+        );
+        assert!(
+            stdout
+                .lines()
+                .any(|line| line == format!("info string tune {name} = {}", 50 + idx)),
+            "{stdout}"
+        );
+    }
+    assert!(stdout.lines().any(|line| line == "readyok"));
+}
+
 fn spawn_ember() -> (Child, Receiver<String>) {
     spawn_ember_in_dir(None)
 }
