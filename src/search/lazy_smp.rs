@@ -766,6 +766,11 @@ fn run_lazy_smp_worker(
         }
     }
 
+    // Completed iterations already flushed their samples. A stop can leave
+    // an unfinished iteration staged; discard it before exporting learning
+    // or retaining this worker for the next job.
+    #[cfg(feature = "node-correction-training")]
+    searcher.discard_correction_staging();
     let result = ThreadResult {
         thread_id,
         best_move,
@@ -1001,6 +1006,83 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         // Keep the finished handle in the pool for ensure_workers to replace/join.
+    }
+
+    #[test]
+    #[cfg(feature = "node-correction-training")]
+    fn lazy_smp_stopped_worker_discards_staging_before_new_game_and_restart() {
+        // Private worker-exit contract: seed a pending descendant sample to
+        // model learning queued before a stop, then reuse that worker across
+        // the same clear-learning and preparation calls used by ucinewgame.
+        // A TSV move assertion cannot observe the retained staging arrays.
+        for thread_id in [0, 1] {
+            for pre_stopped in [true, false] {
+                let (st, mut worker) = root();
+                worker.corr_hist[3] = 37;
+                let start = Instant::now();
+                let mut job = LazySmpSearchJob {
+                    shared_tt: Arc::clone(&worker.shared_tt),
+                    stopped: Arc::new(AtomicBool::new(pre_stopped)),
+                    st,
+                    root_moves: Arc::new(generate_moves(&st, st.w, &st.cr, st.ep)),
+                    num_threads: 2,
+                    limits: LazySmpSearchLimits {
+                        soft_time: f64::INFINITY,
+                        hard_time: f64::INFINITY,
+                        depth: 8,
+                        node_limit: (!pre_stopped).then_some(1),
+                        start,
+                    },
+                    root_context: Arc::new(LazySmpRootContext::from_searcher(&worker, false)),
+                    start,
+                    global_best_depth: Arc::new(AtomicI32::new(0)),
+                    printed_depth: Arc::new(AtomicI32::new(0)),
+                    global_nodes: Arc::new(AtomicU64::new(0)),
+                    node_limit_counter: None,
+                    worker_best_moves: (0..2).map(|_| AtomicU64::new(0)).collect(),
+                    worker_depths: (0..2).map(|_| AtomicI32::new(0)).collect(),
+                };
+                job.root_context.prepare_worker(
+                    &mut worker,
+                    Arc::clone(&job.shared_tt),
+                    Arc::clone(&job.stopped),
+                    &st,
+                    false,
+                );
+                worker.stage_correction_delta(3, 64, 5);
+                let expected = worker.corr_hist;
+                let result = run_lazy_smp_worker(&mut worker, thread_id, &job);
+                assert!(job.stopped.load(Ordering::Relaxed));
+                assert_eq!(result.depth, 0);
+                assert_eq!(result.nodes > 0, !pre_stopped);
+                assert_eq!(worker.corr_hist, expected);
+                assert!(worker.corr_staged_touched.is_empty());
+                assert!(worker.corr_staged_depth.iter().all(|depth| *depth == 0));
+                assert!(worker.corr_staged_diff.iter().all(|diff| *diff == 0));
+                if let Some(learning) = result.learning {
+                    assert_eq!(learning.corr_hist, expected);
+                }
+
+                worker.clear_learning();
+                job.stopped = Arc::new(AtomicBool::new(false));
+                job.limits.depth = 2;
+                job.limits.node_limit = None;
+                job.root_context = Arc::new(LazySmpRootContext::from_searcher(&worker, false));
+                job.root_context.prepare_worker(
+                    &mut worker,
+                    Arc::clone(&job.shared_tt),
+                    Arc::clone(&job.stopped),
+                    &st,
+                    false,
+                );
+                let restarted = run_lazy_smp_worker(&mut worker, thread_id, &job);
+                assert_eq!(restarted.depth, 2);
+                assert!(restarted.nodes > 0);
+                assert!(worker.corr_hist.iter().all(|value| *value == 0));
+                worker.flush_correction_staging();
+                assert!(worker.corr_hist.iter().all(|value| *value == 0));
+            }
+        }
     }
 
     #[test]

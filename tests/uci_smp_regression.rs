@@ -611,6 +611,54 @@ fn immediate_stop_interrupts_lazy_smp_search() {
 }
 
 #[test]
+fn smp_stop_new_game_then_restart_completes_search() {
+    // Public UCI lifecycle contract: stop a running search after completed
+    // iterations, reset the game, then search with the retained SMP pool.
+    // Private staging-state assertions live in the worker regression.
+    struct ReapOnDrop(Child);
+    impl Drop for ReapOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let (child, rx) = spawn_ember();
+    let mut child = ReapOnDrop(child);
+    let mut stdin = child.0.stdin.take().expect("capture Ember stdin");
+    write!(
+        stdin,
+        "uci\nsetoption name Threads value 4\nsetoption name Hash value 16\nsetoption name Book value\nisready\n"
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    assert!(wait_for_line(&rx, "readyok", UCI_STARTUP_TIMEOUT).is_some());
+
+    write!(stdin, "position startpos\ngo infinite\n").unwrap();
+    stdin.flush().unwrap();
+    assert!(
+        wait_for_line(&rx, "info depth 4 ", UCI_STARTUP_TIMEOUT).is_some(),
+        "SMP search did not complete eligible descendant-training iterations"
+    );
+    writeln!(stdin, "stop").unwrap();
+    stdin.flush().unwrap();
+    assert!(wait_for_line(&rx, "bestmove ", Duration::from_secs(5)).is_some());
+
+    write!(stdin, "ucinewgame\nisready\n").unwrap();
+    stdin.flush().unwrap();
+    assert!(wait_for_line(&rx, "readyok", UCI_STARTUP_TIMEOUT).is_some());
+    write!(stdin, "position startpos\ngo depth 2\n").unwrap();
+    stdin.flush().unwrap();
+    assert!(wait_for_line(&rx, "info depth 2 ", UCI_STARTUP_TIMEOUT).is_some());
+    assert!(wait_for_line(&rx, "bestmove ", Duration::from_secs(5)).is_some());
+    writeln!(stdin, "quit").unwrap();
+    stdin.flush().unwrap();
+    drop(stdin);
+    assert!(wait_for_exit(&mut child.0, Duration::from_secs(5))
+        .expect("Ember did not exit after restart")
+        .success());
+}
+
+#[test]
 fn completed_ponder_search_waits_for_ponderhit() {
     let (mut child, rx) = spawn_ember();
     let mut stdin = child.stdin.take().expect("capture Ember stdin");

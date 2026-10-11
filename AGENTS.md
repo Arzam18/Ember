@@ -269,6 +269,10 @@ not apply many same-slot updates: shared pawn slots can be reached by hundreds o
 and unbounded per-node steps saturate slots past the usable read range within a single
 game. Keep every applied step small relative to the table limit, and keep the applied
 updates per slot per boundary at one.
+Pending samples belong to one search and learning context. Discard unfinished
+worker samples before returning a result, and discard staging when learning is
+cleared or imported and when a new search is prepared. Cover stopped workers,
+new-game resets, and restart without relying on a timing race.
 Use wide intermediates over the entire accepted tuning range, and round-trip every tuning
 parameter through set/get/list so new enum variants cannot outgrow or shift the mapping.
 

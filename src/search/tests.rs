@@ -2825,6 +2825,45 @@ fn rejected_probcut_proofs_do_not_train_correction_history() {
 
 #[test]
 #[cfg(feature = "node-correction-training")]
+fn correction_staging_is_discarded_when_learning_context_changes() {
+    // Private staging contract: pending samples must not mutate cleared or
+    // imported learning, or survive preparation for a different search.
+    for reset in ["clear", "import", "prepare"] {
+        let mut searcher = correction_history_searcher(false);
+        searcher.corr_hist[3] = 37;
+        let replacement = searcher.export_learning();
+        for (idx, diff, depth) in [(3, 64, 5), (7, -64, 6)] {
+            searcher.stage_correction_delta(idx, diff, depth);
+        }
+        assert_eq!(searcher.corr_staged_touched.len(), 2);
+        match reset {
+            "clear" => searcher.clear_learning(),
+            "import" => {
+                searcher.corr_hist[3] = -50;
+                searcher.import_learning(&replacement);
+            }
+            "prepare" => searcher.prepare_for_search(),
+            _ => unreachable!(),
+        }
+        assert_eq!(searcher.corr_hist[3], if reset == "clear" { 0 } else { 37 });
+        let expected = searcher.corr_hist;
+        assert!(searcher.corr_staged_touched.is_empty(), "{reset}");
+        assert!(searcher.corr_staged_depth.iter().all(|depth| *depth == 0));
+        assert!(searcher.corr_staged_diff.iter().all(|diff| *diff == 0));
+        searcher.flush_correction_staging();
+        assert_eq!(searcher.corr_hist, expected, "{reset} must discard samples");
+
+        // A later sample for the same slot must be registered and applied.
+        searcher.stage_correction_delta(3, 64, 5);
+        assert_eq!(searcher.corr_staged_touched, [3]);
+        searcher.flush_correction_staging();
+        assert_ne!(searcher.corr_hist[3], expected[3]);
+        assert_eq!(searcher.corr_hist[7], expected[7]);
+    }
+}
+
+#[test]
+#[cfg(feature = "node-correction-training")]
 fn descendant_correction_can_reverse_the_final_root_residual() {
     // Private residual contract: two quiet plies retain the root's pawn/side
     // key, so training the descendant invalidates a cached corrected root eval.

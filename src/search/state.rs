@@ -401,12 +401,16 @@ impl Searcher {
     }
 
     pub fn import_learning(&mut self, learning: &SearchLearning) {
+        #[cfg(feature = "node-correction-training")]
+        self.discard_correction_staging();
         self.history = learning.history;
         self.counter_move = learning.counter_move;
         self.corr_hist = learning.corr_hist;
     }
 
     pub fn prepare_for_search(&mut self) {
+        #[cfg(feature = "node-correction-training")]
+        self.discard_correction_staging();
         self.rep_root_len = self.rep_stack_len;
         self.excluded_moves.fill(None);
         #[cfg(feature = "search-debug")]
@@ -542,6 +546,8 @@ impl Searcher {
     }
 
     pub fn clear_learning(&mut self) {
+        #[cfg(feature = "node-correction-training")]
+        self.discard_correction_staging();
         self.killers = [[None; 2]; MAX_PLY];
         self.history = [[0; 64]; 64];
         self.counter_move = [[None; 64]; 13];
@@ -1401,6 +1407,17 @@ impl Searcher {
                 self.debug.stats.corr_node_flushed += 1;
             }
             self.apply_correction_delta(idx, diff, depth);
+        }
+        self.corr_staged_touched.clear();
+    }
+
+    // Pending samples belong to the current search and learning context.
+    // Discard unfinished work without changing already committed learning.
+    #[cfg(feature = "node-correction-training")]
+    pub(crate) fn discard_correction_staging(&mut self) {
+        for &idx in &self.corr_staged_touched {
+            self.corr_staged_depth[idx as usize] = 0;
+            self.corr_staged_diff[idx as usize] = 0;
         }
         self.corr_staged_touched.clear();
     }
