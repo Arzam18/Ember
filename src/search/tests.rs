@@ -2049,7 +2049,7 @@ fn correction_history_cached_update_matches_fresh_arithmetic_and_modes() {
     // Private cached-helper contract: compare complete correction tables and
     // arithmetic boundaries, not a chosen root move (which TSV would observe).
     // Reference values for depth 3 with default constants: bonus =
-    // clamp(err * 4 * 10 / 55, +/-269), trained =
+    // clamp(err * 4 * 10 / 55, +/-16), trained =
     // clamp(old + bonus - old * |bonus| / 1024, +/-1024); |err| >= 500 and
     // depth < 3 must not train.
     let expected: [(i32, i32, i32); 126] = [
@@ -2069,16 +2069,16 @@ fn correction_history_cached_update_matches_fresh_arithmetic_and_modes() {
         (-1023, 7, -1014),
         (-1023, 8, -1014),
         (-1023, 9, -1012),
-        (-1023, 63, -934),
-        (-1023, 64, -932),
-        (-1023, 65, -930),
-        (-1023, 499, -486),
+        (-1023, 63, -992),
+        (-1023, 64, -992),
+        (-1023, 65, -992),
+        (-1023, 499, -992),
         (-1023, 500, -1023),
         (-201, -500, -201),
-        (-201, -499, -418),
-        (-201, -65, -239),
-        (-201, -64, -238),
-        (-201, -63, -238),
+        (-201, -499, -214),
+        (-201, -65, -214),
+        (-201, -64, -214),
+        (-201, -63, -214),
         (-201, -9, -206),
         (-201, -8, -206),
         (-201, -7, -206),
@@ -2090,16 +2090,16 @@ fn correction_history_cached_update_matches_fresh_arithmetic_and_modes() {
         (-201, 7, -196),
         (-201, 8, -196),
         (-201, 9, -194),
-        (-201, 63, -148),
-        (-201, 64, -146),
-        (-201, 65, -145),
-        (-201, 499, 120),
+        (-201, 63, -182),
+        (-201, 64, -182),
+        (-201, 65, -182),
+        (-201, 499, -182),
         (-201, 500, -201),
         (-199, -500, -199),
-        (-199, -499, -416),
-        (-199, -65, -237),
-        (-199, -64, -237),
-        (-199, -63, -236),
+        (-199, -499, -212),
+        (-199, -65, -212),
+        (-199, -64, -212),
+        (-199, -63, -212),
         (-199, -9, -204),
         (-199, -8, -204),
         (-199, -7, -204),
@@ -2111,16 +2111,16 @@ fn correction_history_cached_update_matches_fresh_arithmetic_and_modes() {
         (-199, 7, -194),
         (-199, 8, -194),
         (-199, 9, -192),
-        (-199, 63, -146),
-        (-199, 64, -145),
-        (-199, 65, -143),
-        (-199, 499, 122),
+        (-199, 63, -180),
+        (-199, 64, -180),
+        (-199, 65, -180),
+        (-199, 499, -180),
         (-199, 500, -199),
         (199, -500, 199),
-        (199, -499, -122),
-        (199, -65, 143),
-        (199, -64, 145),
-        (199, -63, 146),
+        (199, -499, 180),
+        (199, -65, 180),
+        (199, -64, 180),
+        (199, -63, 180),
         (199, -9, 192),
         (199, -8, 194),
         (199, -7, 194),
@@ -2132,16 +2132,16 @@ fn correction_history_cached_update_matches_fresh_arithmetic_and_modes() {
         (199, 7, 204),
         (199, 8, 204),
         (199, 9, 204),
-        (199, 63, 236),
-        (199, 64, 237),
-        (199, 65, 237),
-        (199, 499, 416),
+        (199, 63, 212),
+        (199, 64, 212),
+        (199, 65, 212),
+        (199, 499, 212),
         (199, 500, 199),
         (201, -500, 201),
-        (201, -499, -120),
-        (201, -65, 145),
-        (201, -64, 146),
-        (201, -63, 148),
+        (201, -499, 182),
+        (201, -65, 182),
+        (201, -64, 182),
+        (201, -63, 182),
         (201, -9, 194),
         (201, -8, 196),
         (201, -7, 196),
@@ -2153,16 +2153,16 @@ fn correction_history_cached_update_matches_fresh_arithmetic_and_modes() {
         (201, 7, 206),
         (201, 8, 206),
         (201, 9, 206),
-        (201, 63, 238),
-        (201, 64, 238),
-        (201, 65, 239),
-        (201, 499, 418),
+        (201, 63, 214),
+        (201, 64, 214),
+        (201, 65, 214),
+        (201, 499, 214),
         (201, 500, 201),
         (1023, -500, 1023),
-        (1023, -499, 486),
-        (1023, -65, 930),
-        (1023, -64, 932),
-        (1023, -63, 934),
+        (1023, -499, 992),
+        (1023, -65, 992),
+        (1023, -64, 992),
+        (1023, -63, 992),
         (1023, -9, 1012),
         (1023, -8, 1014),
         (1023, -7, 1014),
@@ -2301,12 +2301,13 @@ fn correction_history_reaches_static_eval_and_matches_corrected_eval() {
             assert_eq!(corrected, base + seed);
             searcher.update_correction_history(&st, base, 3);
             let expected_slot = if cfg!(feature = "correction-gravity") {
-                21
+                83
             } else {
                 92
             };
-            // Gravity residual -100 at depth 3: bonus = -100*4*10/55 = -72, gravity
-            // term = 100*72/1024 = 7, so the slot becomes 100 - 72 - 7 = 21.
+            // Gravity residual -100 at depth 3: bonus = -100*4*10/55 = -72
+            // clamped to the -16 cap, gravity term = 100*16/1024 = 1, so the
+            // slot becomes 100 - 16 - 1 = 83.
             assert_eq!(
                 searcher.corr_hist[idx], expected_slot,
                 "training must target the corrected residual: v2={v2} chess960={chess960} \
@@ -2364,10 +2365,10 @@ fn correction_history_gravity_depth_weight_and_tune_overrides() {
     let idx = corr_idx(compute_pawn_hash(&st), st.w);
 
     // The same error trains more with search depth and saturates the bonus
-    // cap: err*min(depth+1,16)*10/55 capped at 1024*263/1000 = 269.
-    for (depth, bonus) in [(3, 72), (10, 200), (15, 269), (24, 269)] {
+    // cap: err*min(depth+1,16)*10/55 capped at 1024*16/1000 = 16.
+    for (depth, bonus) in [(3, 4), (10, 12), (15, 16), (24, 16)] {
         searcher.corr_hist[idx] = 0;
-        searcher.update_correction_history_with_eval(&st, ev + 100, depth, Some(ev));
+        searcher.update_correction_history_with_eval(&st, ev + 6, depth, Some(ev));
         assert_eq!(searcher.corr_hist[idx], bonus, "depth={depth}");
     }
 
@@ -2375,21 +2376,21 @@ fn correction_history_gravity_depth_weight_and_tune_overrides() {
     // quantized away by the old sign-only step.
     searcher.corr_hist[idx] = 0;
     searcher.update_correction_history_with_eval(&st, ev + 499, 15, Some(ev));
-    assert_eq!(searcher.corr_hist[idx], 269);
+    assert_eq!(searcher.corr_hist[idx], 16);
     searcher.corr_hist[idx] = 0;
     searcher.update_correction_history_with_eval(&st, ev + 2, 3, Some(ev));
     assert_eq!(searcher.corr_hist[idx], 1);
 
     // Gravity shrinks every step near the limit instead of integrating
-    // linearly: 1000 + 72 - 1000*72/1024 = 1002, not 1072.
+    // linearly: 1000 + 16 - 1000*16/1024 = 1001, not 1016.
     searcher.corr_hist[idx] = 1000;
     searcher.update_correction_history_with_eval(&st, ev + 100, 3, Some(ev));
-    assert_eq!(searcher.corr_hist[idx], 1002);
+    assert_eq!(searcher.corr_hist[idx], 1001);
 
     // Repeated capped same-sign errors converge toward the limit from both
     // directions without ever crossing it.
     searcher.corr_hist[idx] = 0;
-    for _ in 0..64 {
+    for _ in 0..512 {
         searcher.update_correction_history_with_eval(&st, ev + 499, 15, Some(ev));
         assert!(searcher.corr_hist[idx] <= 1024);
     }
@@ -2398,7 +2399,7 @@ fn correction_history_gravity_depth_weight_and_tune_overrides() {
         "converged={}",
         searcher.corr_hist[idx]
     );
-    for _ in 0..64 {
+    for _ in 0..512 {
         searcher.update_correction_history_with_eval(&st, ev - 499, 15, Some(ev));
         assert!(searcher.corr_hist[idx] >= -1024);
     }
@@ -2411,12 +2412,12 @@ fn correction_history_gravity_depth_weight_and_tune_overrides() {
     // Tune overrides change the arithmetic and reset restores the default.
     crate::tune::set(crate::tune::TuneParam::CorrWeightNum, 5);
     searcher.corr_hist[idx] = 0;
-    searcher.update_correction_history_with_eval(&st, ev + 100, 3, Some(ev));
-    assert_eq!(searcher.corr_hist[idx], 36);
+    searcher.update_correction_history_with_eval(&st, ev + 6, 3, Some(ev));
+    assert_eq!(searcher.corr_hist[idx], 2);
     crate::tune::reset();
     searcher.corr_hist[idx] = 0;
-    searcher.update_correction_history_with_eval(&st, ev + 100, 3, Some(ev));
-    assert_eq!(searcher.corr_hist[idx], 72);
+    searcher.update_correction_history_with_eval(&st, ev + 6, 3, Some(ev));
+    assert_eq!(searcher.corr_hist[idx], 4);
 }
 
 #[test]
@@ -2504,7 +2505,7 @@ fn correction_history_node_gate_matrix() {
             depth: 3,
             score: ev - 64,
             expect_train: true,
-            expect_slot: -10,
+            expect_slot: 21,
         },
         Case {
             name: "quiet fail-high train",
@@ -2515,7 +2516,7 @@ fn correction_history_node_gate_matrix() {
             depth: 3,
             score,
             expect_train: true,
-            expect_slot: 82,
+            expect_slot: 53,
         },
         Case {
             name: "quiet exact train",
@@ -2526,7 +2527,7 @@ fn correction_history_node_gate_matrix() {
             depth: 3,
             score,
             expect_train: true,
-            expect_slot: 82,
+            expect_slot: 53,
         },
         Case {
             name: "check node",
@@ -2621,6 +2622,8 @@ fn correction_history_node_gate_matrix() {
             case.best_move_quiet,
         );
         assert_eq!(trained, case.expect_train, "case {}", case.name);
+        // Training stages its sample; the boundary flush applies it.
+        searcher.flush_correction_staging();
         if case.expect_train {
             assert_eq!(
                 searcher.corr_hist[corr_idx(compute_pawn_hash(&st), st.w)],
@@ -2638,6 +2641,11 @@ fn correction_history_node_gate_matrix() {
             assert!(
                 searcher.corr_hist.iter().all(|v| *v == 37),
                 "case {} must not write any slot",
+                case.name
+            );
+            assert!(
+                searcher.corr_staged_touched.is_empty(),
+                "case {} must not stage a slot",
                 case.name
             );
         }
@@ -2792,6 +2800,9 @@ fn rejected_probcut_proofs_do_not_train_correction_history() {
         let mut nodes = 0;
         let score = searcher.negamax(&mut st, 5, 1, -INF, INF, true, &mut nodes);
         assert!(nodes > 0);
+        // Boundary flush applies anything staged; rejected proofs must leave
+        // both the table and the staging buffer untouched.
+        searcher.flush_correction_staging();
         let stats = searcher.debug_stats();
         if verification {
             assert_eq!(
@@ -2852,6 +2863,8 @@ fn descendant_correction_can_reverse_the_final_root_residual() {
             true
         ));
     }
+    // Staged descendant samples reach the table at the search boundary.
+    searcher.flush_correction_staging();
     let fresh_eval = searcher.corrected_eval(&root);
     let final_score = initial_eval + (fresh_eval - initial_eval) / 2;
     assert!(final_score > initial_eval && final_score < fresh_eval);

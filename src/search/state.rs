@@ -117,6 +117,12 @@ impl Searcher {
             history: [[0i32; 64]; 64],
             counter_move: [[None; 64]; 13],
             corr_hist: [0i32; CORR_HIST_SIZE * 2],
+            #[cfg(feature = "node-correction-training")]
+            corr_staged_depth: [0u8; CORR_HIST_SIZE * 2],
+            #[cfg(feature = "node-correction-training")]
+            corr_staged_diff: [0i16; CORR_HIST_SIZE * 2],
+            #[cfg(feature = "node-correction-training")]
+            corr_staged_touched: Vec::with_capacity(512),
             eval_history: [i32::MIN; MAX_PLY],
             rep_stack: Vec::with_capacity(512),
             rep_stack_len: 0,
@@ -628,7 +634,7 @@ impl Searcher {
         }
         let s = self.debug.stats;
         eprintln!(
-            "info string search-debug root depth={depth} order={order} move={mv} alpha={alpha} beta={beta} score={score} nodes={nodes} seldepth={} tt_hits={} tt_max_depth={} tt_cutoffs={} rfp={} futility={} null={}/{} iid={} lmp={} history={} see={} lmr={}/{} lmr_sum={} lmr_max={} lmr_adjust={}/{}/{} lmr_zero={} lmr_saturated={} qnodes={} qdelta={} qsee={} qcheck_cap={} probcut_eligible={} probcut_safety={} probcut_tt={} probcut_candidates={} probcut_see={} probcut_qpass={} probcut_verify={} probcut_nodes={} probcut_cutoffs={} probcut_stops={} singular_candidates={} singular_safety={} singular_verify={} singular_nodes={} singular_extensions={} singular_extension_plies={} singular_negative={} singular_multicut={} singular_alternatives={} singular_stops={} corr_exits={} corr_trains={}",
+            "info string search-debug root depth={depth} order={order} move={mv} alpha={alpha} beta={beta} score={score} nodes={nodes} seldepth={} tt_hits={} tt_max_depth={} tt_cutoffs={} rfp={} futility={} null={}/{} iid={} lmp={} history={} see={} lmr={}/{} lmr_sum={} lmr_max={} lmr_adjust={}/{}/{} lmr_zero={} lmr_saturated={} qnodes={} qdelta={} qsee={} qcheck_cap={} probcut_eligible={} probcut_safety={} probcut_tt={} probcut_candidates={} probcut_see={} probcut_qpass={} probcut_verify={} probcut_nodes={} probcut_cutoffs={} probcut_stops={} singular_candidates={} singular_safety={} singular_verify={} singular_nodes={} singular_extensions={} singular_extension_plies={} singular_negative={} singular_multicut={} singular_alternatives={} singular_stops={} corr_exits={} corr_trains={} corr_flushed={}",
             s.max_ply,
             s.tt_hits,
             s.tt_max_depth,
@@ -676,6 +682,7 @@ impl Searcher {
             s.singular_stop_rejections,
             s.corr_node_exits,
             s.corr_node_trains,
+            s.corr_node_flushed,
         );
     }
 
@@ -1314,10 +1321,17 @@ impl Searcher {
         {
             self.debug.stats.corr_last_update = Some((idx, self.corr_hist[idx], ev, score, depth));
         }
+        self.apply_correction_delta(idx, diff, depth);
+        true
+    }
+
+    // Apply one correction step at a validated (idx, diff, depth) pair.
+    fn apply_correction_delta(&mut self, idx: usize, diff: i64, depth: i32) {
         #[cfg(not(feature = "correction-gravity"))]
         {
             // Preserve the established root integrator until the gravity
             // experiment has independent playing-strength support.
+            let _ = depth;
             let old = i64::from(self.corr_hist[idx]);
             self.corr_hist[idx] = (old + diff.clamp(-64, 64) / 8).clamp(-1024, 1024) as i32;
         }
@@ -1328,15 +1342,17 @@ impl Searcher {
             // the raw error is not pre-clamped so a deep large error earns
             // the capped full bonus, and the gravity term shrinks every step
             // as the slot approaches the limit so repeated same-sign errors
-            // converge to +/-LIMIT instead of integrating linearly. Defaults
-            // reproduce the reference scheme: bonus = err * min(depth+1, 16)
-            // * 10/55 capped at LIMIT * 10/38, gravity = old + bonus -
-            // old*|bonus|/LIMIT.
+            // converge to +/-LIMIT instead of integrating linearly.
+            // The cap default is 16 permille of the 1024 table limit (16 cp):
+            // one update stays within twice the established root-integrator
+            // step. Measured wider caps (263 permille = 269 cp) let repeated
+            // training saturate shared pawn slots and swing a corrected
+            // evaluation by the full +/-200 read clamp within a single game.
             // Keep every intermediate wide: accepted Tune values can make
             // both the cap product and old * |bonus| exceed i32.
             let limit = tune::get_int(TuneParam::CorrGravityLimit, 1024).clamp(1, 32768);
             let cap = (limit
-                * tune::get_int(TuneParam::CorrBonusCapPermille, 263).clamp(0, 1_000_000))
+                * tune::get_int(TuneParam::CorrBonusCapPermille, 16).clamp(0, 1_000_000))
                 / 1000;
             let depth_cap = tune::get_int(TuneParam::CorrDepthCap, 16).clamp(1, 1024);
             let scale = (i64::from(depth) + 1).clamp(1, depth_cap);
@@ -1348,7 +1364,45 @@ impl Searcher {
             self.corr_hist[idx] =
                 (old + bonus - old * bonus.abs() / limit).clamp(-limit, limit) as i32;
         }
-        true
+    }
+
+    // Stage one descendant sample for a pawn slot: the slot keeps the
+    // deepest residual seen since the last flush. Descendants share pawn
+    // slots with the root and each other, so immediate writes would let one
+    // search's bound scores accumulate far past the usable read range and
+    // shift the evaluation while the search still trusts its transposition
+    // table.
+    #[cfg(feature = "node-correction-training")]
+    pub(super) fn stage_correction_delta(&mut self, idx: usize, diff: i64, depth: i32) {
+        debug_assert!(diff.abs() < 500);
+        let depth = depth.clamp(1, u8::MAX as i32) as u8;
+        if self.corr_staged_depth[idx] == 0 {
+            self.corr_staged_touched.push(idx as u16);
+        } else if depth <= self.corr_staged_depth[idx] {
+            return;
+        }
+        self.corr_staged_depth[idx] = depth;
+        self.corr_staged_diff[idx] = diff.clamp(i16::MIN as i64, i16::MAX as i64) as i16;
+    }
+
+    // Apply at most one staged update per slot. Callers flush only at
+    // iteration or search boundaries, never inside a running search.
+    #[cfg(feature = "node-correction-training")]
+    pub(crate) fn flush_correction_staging(&mut self) {
+        let len = self.corr_staged_touched.len();
+        for i in 0..len {
+            let idx = self.corr_staged_touched[i] as usize;
+            let diff = i64::from(self.corr_staged_diff[idx]);
+            let depth = i32::from(self.corr_staged_depth[idx]);
+            self.corr_staged_depth[idx] = 0;
+            self.corr_staged_diff[idx] = 0;
+            #[cfg(feature = "search-debug")]
+            {
+                self.debug.stats.corr_node_flushed += 1;
+            }
+            self.apply_correction_delta(idx, diff, depth);
+        }
+        self.corr_staged_touched.clear();
     }
 
     pub(super) fn repetition_info(&self, reversible_plies: usize) -> (u8, bool) {

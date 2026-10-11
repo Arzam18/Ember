@@ -173,12 +173,13 @@ fn correction_history_public_updater_observes_successive_training() {
         .filter(|(a, b)| **a != *b)
         .collect();
     assert_eq!(changes.len(), 1);
-    // Gravity's depth-3 arithmetic: residual 64 gives bonus
-    // 64*4*10/55 = 46 and gravity 100*46/1024 = 4, so the first update lands
-    // at 142; the second sees residual 22, bonus 16, gravity 2 -> 156.
+    // Gravity's depth-3 arithmetic with the 16-permille cap: residual 64
+    // gives bonus 64*4*10/55 = 46 clamped to 16 and gravity 100*16/1024 = 1,
+    // so the first update lands at 115; the second sees residual 49, bonus
+    // 16, gravity 1 -> 130.
     // The default integrator adds 8 and then 7, yielding 108 and 115.
     let (first_slot, second_slot) = if cfg!(feature = "correction-gravity") {
-        (142, 156)
+        (115, 130)
     } else {
         (108, 115)
     };

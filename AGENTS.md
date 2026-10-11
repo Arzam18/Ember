@@ -259,6 +259,12 @@ An unchanged board does not make a corrected evaluation reusable across search.
 Descendants can share its pawn/side correction slot. Final training must use the current
 correction; reuse is safe only when relevant learning cannot change. Regressions must
 enable descendant learning in every root search mode.
+Descendant samples stage per correction slot and apply only at iteration or search
+boundaries. A running search must not read its own training writes, and one search must
+not apply many same-slot updates: shared pawn slots can be reached by hundreds of nodes,
+and unbounded per-node steps saturate slots past the usable read range within a single
+game. Keep every applied step small relative to the table limit, and keep the applied
+updates per slot per boundary at one.
 Use wide intermediates over the entire accepted tuning range, and round-trip every tuning
 parameter through set/get/list so new enum variants cannot outgrow or shift the mapping.
 

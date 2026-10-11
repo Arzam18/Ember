@@ -746,6 +746,8 @@ fn run_lazy_smp_worker(
                     true,
                 );
             }
+            #[cfg(feature = "node-correction-training")]
+            searcher.flush_correction_staging();
             searcher.update_correction_history(&st, best_score, best_depth);
             if !searcher.pondering.load(Ordering::Relaxed)
                 && lazy_smp_worker_can_coordinate_stop(

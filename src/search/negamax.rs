@@ -1434,16 +1434,28 @@ impl Searcher {
             }
             return false;
         }
-        let trained = self.update_correction_history_with_eval(st, best_score, depth, Some(eval));
-        #[cfg(feature = "search-debug")]
-        {
-            if trained {
-                self.debug.stats.corr_node_trains += 1;
-            } else {
+        if !self.corr_hist_enabled() || depth < 3 || best_score.abs() > MATE / 2 {
+            #[cfg(feature = "search-debug")]
+            {
                 self.debug.stats.corr_node_update_rejected += 1;
             }
+            return false;
         }
-        trained
+        let diff = i64::from(best_score) - i64::from(eval);
+        if diff.abs() >= 500 {
+            #[cfg(feature = "search-debug")]
+            {
+                self.debug.stats.corr_node_update_rejected += 1;
+            }
+            return false;
+        }
+        let idx = corr_idx(compute_pawn_hash(st), st.w);
+        self.stage_correction_delta(idx, diff, depth);
+        #[cfg(feature = "search-debug")]
+        {
+            self.debug.stats.corr_node_trains += 1;
+        }
+        true
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -481,6 +481,7 @@ pub struct SearchDebugStats {
     pub singular_stop_rejections: u64,
     pub corr_node_exits: u64,
     pub corr_node_trains: u64,
+    pub corr_node_flushed: u64,
     pub corr_node_reject_check: u64,
     pub corr_node_reject_verification: u64,
     pub corr_node_reject_noisy: u64,
