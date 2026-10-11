@@ -2862,9 +2862,11 @@ fn descendant_correction_can_reverse_the_final_root_residual() {
             false,
             true
         ));
+        // Each completed search boundary applies one same-slot sample. A
+        // single flush would coalesce these eight observations into one step,
+        // whose midpoint residual rounds to zero with the legacy integrator.
+        searcher.flush_correction_staging();
     }
-    // Staged descendant samples reach the table at the search boundary.
-    searcher.flush_correction_staging();
     let fresh_eval = searcher.corrected_eval(&root);
     let final_score = initial_eval + (fresh_eval - initial_eval) / 2;
     assert!(final_score > initial_eval && final_score < fresh_eval);
