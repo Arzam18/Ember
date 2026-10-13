@@ -115,6 +115,16 @@ pub struct Searcher {
     pub history: [[i32; 64]; 64],
     pub counter_move: [[Option<Move>; 64]; 13],
     pub corr_hist: [i32; CORR_HIST_SIZE * 2],
+    // Descendant training stages its samples per pawn slot instead of
+    // writing immediately: the deepest residual per slot is applied only at
+    // an iteration or search boundary, so the table stays immutable while a
+    // search runs and one search cannot accumulate many same-slot writes.
+    #[cfg(feature = "node-correction-training")]
+    pub(crate) corr_staged_depth: [u8; CORR_HIST_SIZE * 2],
+    #[cfg(feature = "node-correction-training")]
+    pub(crate) corr_staged_diff: [i16; CORR_HIST_SIZE * 2],
+    #[cfg(feature = "node-correction-training")]
+    corr_staged_touched: Vec<u16>,
     pub eval_history: [i32; MAX_PLY],
     pub rep_stack: Vec<u64>,
     pub rep_stack_len: usize,

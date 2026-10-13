@@ -66,12 +66,20 @@ convenient result.
   is hard to compare or reproduce.
 - Identify any uncommitted experiment explicitly in its result directory; a revision name
   alone does not identify a dirty tree.
+- Give each revision its own Cargo target directory for binary comparisons. Shared
+  outputs can reuse another worktree's artifacts when source timestamps move backwards.
+  Audit binary hashes and the engine crate's build transcript before comparing results;
+  a successful Cargo exit alone does not establish the binary's source revision.
 - Preserve raw logs, PGNs, JSON summaries, engine traces, and benchmark output needed to
   audit a conclusion.
 - For long differential comparisons, record each batch invocation, complete
   transcript, and successful exit status. Resume only after verifying those
   artifacts against the original inputs and binaries; preserve interrupted
   partial captures separately.
+- A long head-to-head or tuner run pins the runner file's hash in its manifest and
+  aborts when that file changes mid-run. Keep runner edits away from an active run;
+  to change the runner, wait for the run to finish or resume it from a byte-identical
+  copy kept outside the tree.
 - Propagate background output-reader and transcript-write failures to validation callers.
   Keep draining subprocess pipes after a logging failure, reap the process, and reject
   incomplete captures even when the subprocess exits successfully.
@@ -254,6 +262,23 @@ a subtly different command.
 
 Every bug fix should have a regression at the narrowest useful layer. A regression proves
 the causal invariant, not just that the final game happens to end differently.
+
+An unchanged board does not make a corrected evaluation reusable across search.
+Descendants can share its pawn/side correction slot. Final training must use the current
+correction; reuse is safe only when relevant learning cannot change. Regressions must
+enable descendant learning in every root search mode.
+Descendant samples stage per correction slot and apply only at iteration or search
+boundaries. A running search must not read its own training writes, and one search must
+not apply many same-slot updates: shared pawn slots can be reached by hundreds of nodes,
+and unbounded per-node steps saturate slots past the usable read range within a single
+game. Keep every applied step small relative to the table limit, and keep the applied
+updates per slot per boundary at one.
+Pending samples belong to one search and learning context. Discard unfinished
+worker samples before returning a result, and discard staging when learning is
+cleared or imported and when a new search is prepared. Cover stopped workers,
+new-game resets, and restart without relying on a timing race.
+Use wide intermediates over the entire accepted tuning range, and round-trip every tuning
+parameter through set/get/list so new enum variants cannot outgrow or shift the mapping.
 
 When a Python test compares exact file or archive bytes, create its fixture with
 `Path.write_bytes`. Text-mode writes translate newlines on Windows and can change the
