@@ -7,6 +7,7 @@ const LMR_BASE_MILLIS: i64 = 500;
 const LMR_MIN_MOVE_INDEX: i64 = 2;
 const LMR_MIN_DEPTH: i64 = 2;
 const LMR_NON_PV_EXTRA: i64 = 1;
+const LMR_CAPTURE_DIVISOR_MILLIS: i64 = 1200;
 const TACTICAL_CHECK_EXTENSION_MAX_DEPTH: i64 = 2;
 const IMPROVING_MARGIN_NUMERATOR: i64 = 3;
 const IMPROVING_MARGIN_DENOMINATOR: i64 = 4;
@@ -54,8 +55,13 @@ pub(super) fn lmr_policy_eligible(
     actual_depth: i32,
     is_quiet: bool,
     in_check: bool,
+    gives_check: bool,
+    is_pv: bool,
 ) -> bool {
-    if !is_quiet || in_check {
+    if gives_check {
+        return false;
+    }
+    if !is_quiet && (in_check || is_pv) {
         return false;
     }
     let min_move_index = tune::get_int(TuneParam::LmrMinMoveIndex, LMR_MIN_MOVE_INDEX);
@@ -64,9 +70,13 @@ pub(super) fn lmr_policy_eligible(
 }
 
 #[inline(always)]
-pub(super) fn lmr_reduction(move_index: usize, actual_depth: i32, is_pv: bool) -> i32 {
+fn lmr_reduction_with_divisor(
+    divisor: f64,
+    move_index: usize,
+    actual_depth: i32,
+    is_pv: bool,
+) -> i32 {
     let base_millis = tune::get_int(TuneParam::LmrBaseMillis, LMR_BASE_MILLIS) as f64;
-    let divisor = tune::get_int(TuneParam::LmrDivisorMillis, 1800) as f64;
     let non_pv_extra = tune::get_int(TuneParam::LmrNonPvExtra, LMR_NON_PV_EXTRA) as i32;
     let max_reduction = (actual_depth - 1).max(1);
     let reduction = (base_millis / 1000.0
@@ -78,6 +88,21 @@ pub(super) fn lmr_reduction(move_index: usize, actual_depth: i32, is_pv: bool) -
     } else {
         (reduction + non_pv_extra).clamp(1, max_reduction)
     }
+}
+
+#[inline(always)]
+pub(super) fn lmr_reduction(move_index: usize, actual_depth: i32, is_pv: bool) -> i32 {
+    let divisor = tune::get_int(TuneParam::LmrDivisorMillis, 1800) as f64;
+    lmr_reduction_with_divisor(divisor, move_index, actual_depth, is_pv)
+}
+
+#[inline(always)]
+pub(super) fn lmr_reduction_non_quiet(move_index: usize, actual_depth: i32, is_pv: bool) -> i32 {
+    let divisor = tune::get_int(
+        TuneParam::LmrCaptureDivisorMillis,
+        LMR_CAPTURE_DIVISOR_MILLIS,
+    ) as f64;
+    lmr_reduction_with_divisor(divisor, move_index, actual_depth, is_pv)
 }
 
 /// History-scaled LMR: moves with strong history are reduced less (down to no
@@ -1068,6 +1093,8 @@ macro_rules! negamax_mode_body {
                 .unwrap_or(0);
             let move_ext = combine_move_extensions(tactical_move_ext, singular_extension);
 
+            let move_gives_check = !is_quiet && special_move_gives_check_mode::<CHESS960>($st, mv);
+
             let st_before = *$st;
             let legal = if pseudo_moves {
                 perf_time!(
@@ -1121,7 +1148,14 @@ macro_rules! negamax_mode_body {
             let lmr_eligible = $this.lmr_enabled()
                 && excluded_move.is_none()
                 && move_index > 0
-                && lmr_policy_eligible(move_index, actual_depth, is_quiet, in_check);
+                && lmr_policy_eligible(
+                    move_index,
+                    actual_depth,
+                    is_quiet,
+                    in_check,
+                    move_gives_check,
+                    is_pv,
+                );
             let s = if move_index == 0 {
                 -$this.$negamax_mode::<CHESS960, NODE_LIMITED, E>(
                     $st,
@@ -1136,15 +1170,23 @@ macro_rules! negamax_mode_body {
             } else if lmr_eligible {
                 let (lmr_hfk, lmr_htk) =
                     from_to_key(move_sr(mv), move_sc(mv), move_er(mv), move_ec(mv));
-                let r = lmr_reduction_with_history(
-                    move_index,
-                    actual_depth,
-                    is_pv,
-                    $this.history[lmr_hfk][lmr_htk],
-                );
+                let r = if is_quiet {
+                    lmr_reduction_with_history(
+                        move_index,
+                        actual_depth,
+                        is_pv,
+                        $this.history[lmr_hfk][lmr_htk],
+                    )
+                } else {
+                    lmr_reduction_non_quiet(move_index, actual_depth, is_pv)
+                };
                 #[cfg(feature = "search-debug")]
                 {
-                    let base_reduction = lmr_reduction(move_index, actual_depth, is_pv);
+                    let base_reduction = if is_quiet {
+                        lmr_reduction(move_index, actual_depth, is_pv)
+                    } else {
+                        lmr_reduction_non_quiet(move_index, actual_depth, is_pv)
+                    };
                     if r == base_reduction {
                         $this.debug.stats.lmr_unchanged_reductions += 1;
                     } else if r > base_reduction {
@@ -1155,8 +1197,11 @@ macro_rules! negamax_mode_body {
                     if r == 0 {
                         $this.debug.stats.lmr_zero_reductions += 1;
                     }
-                    let history = $this.history[lmr_hfk][lmr_htk]
-                        .clamp(-LMR_HISTORY_CLAMP, LMR_HISTORY_CLAMP);
+                    let history = if is_quiet {
+                        $this.history[lmr_hfk][lmr_htk].clamp(-LMR_HISTORY_CLAMP, LMR_HISTORY_CLAMP)
+                    } else {
+                        0
+                    };
                     let unclamped_reduction = base_reduction - history / LMR_HISTORY_DIVISOR;
                     if lmr_reduction_is_saturated(unclamped_reduction, (actual_depth - 1).max(0)) {
                         $this.debug.stats.lmr_saturated_reductions += 1;

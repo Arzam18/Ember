@@ -347,13 +347,17 @@ fn lmp_aggressiveness_controls_preserve_the_default_policy() {
 #[test]
 fn lmr_controls_preserve_default_boundaries_and_reductions() {
     tune::reset();
-    assert!(!lmr_policy_eligible(1, 2, true, false));
-    assert!(lmr_policy_eligible(2, 2, true, false));
-    assert!(!lmr_policy_eligible(2, 1, true, false));
-    assert!(!lmr_policy_eligible(2, 3, false, false));
-    assert!(!lmr_policy_eligible(2, 3, true, true));
+    assert!(!lmr_policy_eligible(1, 2, true, false, false, true));
+    assert!(lmr_policy_eligible(2, 2, true, false, false, true));
+    assert!(!lmr_policy_eligible(2, 1, true, false, false, true));
+    assert!(lmr_policy_eligible(2, 3, false, false, false, false));
+    assert!(!lmr_policy_eligible(2, 3, false, false, false, true));
+    assert!(!lmr_policy_eligible(2, 3, false, true, false, false));
+    assert!(!lmr_policy_eligible(2, 3, false, false, true, false));
+    assert!(lmr_policy_eligible(2, 3, true, true, false, false));
     assert_eq!(lmr_reduction(10, 4, true), 2);
     assert_eq!(lmr_reduction(10, 4, false), 3);
+    assert!(lmr_reduction_non_quiet(10, 4, true) > lmr_reduction(10, 4, true));
 
     tune::set(TuneParam::LmrDivisorMillis, 1200);
     assert_eq!(lmr_reduction(10, 4, true), 3);
@@ -363,11 +367,14 @@ fn lmr_controls_preserve_default_boundaries_and_reductions() {
     tune::set(TuneParam::LmrMinDepth, 5);
     tune::set(TuneParam::LmrBaseMillis, 0);
     tune::set(TuneParam::LmrNonPvExtra, 0);
-    assert!(!lmr_policy_eligible(3, 5, true, false));
-    assert!(!lmr_policy_eligible(4, 4, true, false));
-    assert!(lmr_policy_eligible(4, 5, true, false));
+    assert!(!lmr_policy_eligible(3, 5, true, false, false, true));
+    assert!(!lmr_policy_eligible(4, 4, true, false, false, true));
+    assert!(lmr_policy_eligible(4, 5, true, false, false, true));
     assert_eq!(lmr_reduction(10, 4, true), 1);
     assert_eq!(lmr_reduction(10, 4, false), 1);
+    assert!(lmr_reduction_non_quiet(10, 4, true) > lmr_reduction(10, 4, true));
+    tune::set(TuneParam::LmrCaptureDivisorMillis, 100);
+    assert_eq!(lmr_reduction_non_quiet(10, 4, true), 3);
     tune::reset();
 }
 

@@ -94,6 +94,7 @@ fn every_parameter_round_trips_through_names_values_and_listing() {
         CorrDepthCap,
         CorrWeightNum,
         CorrWeightDen,
+        LmrCaptureDivisorMillis,
     ];
     assert_eq!(TuneParam::COUNT, params.len());
     reset();

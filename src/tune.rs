@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
-const PARAM_COUNT: usize = TuneParam::CorrWeightDen as usize + 1;
+const PARAM_COUNT: usize = TuneParam::LmrCaptureDivisorMillis as usize + 1;
 const _: () = assert!(PARAM_COUNT <= u64::BITS as usize);
 
 static OVERRIDES: [AtomicI64; PARAM_COUNT] = [const { AtomicI64::new(0) }; PARAM_COUNT];
@@ -49,6 +49,7 @@ pub enum TuneParam {
     CorrDepthCap,
     CorrWeightNum,
     CorrWeightDen,
+    LmrCaptureDivisorMillis,
 }
 
 impl TuneParam {
@@ -96,6 +97,7 @@ impl TuneParam {
             TuneParam::CorrDepthCap => "CORR_DEPTH_CAP",
             TuneParam::CorrWeightNum => "CORR_WEIGHT_NUM",
             TuneParam::CorrWeightDen => "CORR_WEIGHT_DEN",
+            TuneParam::LmrCaptureDivisorMillis => "LMR_CAPTURE_DIVISOR_MILLIS",
         }
     }
 
@@ -183,6 +185,9 @@ impl TuneParam {
             "CORR_DEPTH_CAP" | "CORR-DEPTH-CAP" => Some(TuneParam::CorrDepthCap),
             "CORR_WEIGHT_NUM" | "CORR-WEIGHT-NUM" => Some(TuneParam::CorrWeightNum),
             "CORR_WEIGHT_DEN" | "CORR-WEIGHT-DEN" => Some(TuneParam::CorrWeightDen),
+            "LMR_CAPTURE_DIVISOR_MILLIS" | "LMR-CAPTURE-DIVISOR-MILLIS" => {
+                Some(TuneParam::LmrCaptureDivisorMillis)
+            }
             _ => None,
         }
     }
@@ -233,6 +238,7 @@ impl TuneParam {
             37 => TuneParam::CorrDepthCap,
             38 => TuneParam::CorrWeightNum,
             39 => TuneParam::CorrWeightDen,
+            40 => TuneParam::LmrCaptureDivisorMillis,
             _ => unreachable!("invalid tuning parameter index"),
         }
     }
