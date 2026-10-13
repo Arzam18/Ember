@@ -279,6 +279,11 @@ cleared or imported and when a new search is prepared. Cover stopped workers,
 new-game resets, and restart without relying on a timing race.
 Use wide intermediates over the entire accepted tuning range, and round-trip every tuning
 parameter through set/get/list so new enum variants cannot outgrow or shift the mapping.
+Adding a tunable constant updates `tools/auto_tune/tune.toml` and the parameter tables in
+`docs/auto-tuning.md` in the same change, and the round-trip test enumerates it, so the
+enum variant, the tuner range, and the documented default cannot drift apart. A constant
+behind a non-default cargo feature is documented with that feature named and left out of
+`tune.toml`, which tunes default-feature builds only.
 
 When a Python test compares exact file or archive bytes, create its fixture with
 `Path.write_bytes`. Text-mode writes translate newlines on Windows and can change the
