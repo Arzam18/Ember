@@ -33,6 +33,7 @@ from head_to_head import (  # noqa: E402
     threads_per_game,
     validate_run_manifest,
     worker_saturating_batch_pairs,
+    write_text_atomic,
 )
 
 
@@ -755,6 +756,42 @@ revision = {json.dumps(head)}
             self.assertFalse(
                 pair_evidence_is_complete(entry, "candidate", "baseline")
             )
+
+    def test_write_text_atomic_retries_transient_lock_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.json"
+            real_replace = os.replace
+            calls = {"count": 0}
+
+            def locked_replace(source, target):
+                calls["count"] += 1
+                if calls["count"] < 3:
+                    raise PermissionError(5, "locked")
+                return real_replace(source, target)
+
+            with patch("head_to_head.time.sleep"), patch(
+                "head_to_head.os.replace", side_effect=locked_replace
+            ):
+                write_text_atomic(path, '{"ok": true}\n')
+
+            self.assertEqual(calls["count"], 3)
+            self.assertEqual(path.read_text(encoding="utf-8"), '{"ok": true}\n')
+
+    def test_write_text_atomic_still_fails_when_the_lock_never_clears(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.json"
+
+            def locked_replace(source, target):
+                raise PermissionError(5, "locked")
+
+            with patch("head_to_head.time.sleep") as sleep, patch(
+                "head_to_head.os.replace", side_effect=locked_replace
+            ):
+                with self.assertRaises(PermissionError):
+                    write_text_atomic(path, "{}\n")
+
+            self.assertEqual(sleep.call_count, 4)
+            self.assertEqual(list(Path(directory).iterdir()), [])
 
 
 if __name__ == "__main__":

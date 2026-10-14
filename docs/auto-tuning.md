@@ -81,10 +81,25 @@ The tunable constants and their defaults:
 | `LMP_KING_PRESSURE_LIMIT` | 3 | Exclusive king-pressure limit for LMP |
 | `IID_MIN_DEPTH` | 4 | Minimum depth for internal iterative deepening |
 | `LMR_DIVISOR_MILLIS` | 1800 | LMR reduction divisor (ln(move)·ln(depth)·1000 / divisor) |
+| `LMR_CAPTURE_DIVISOR_MILLIS` | 1200 | LMR divisor for non-quiet moves at non-PV nodes |
 | `LMR_BASE_MILLIS` | 500 | Fixed LMR base in thousandths of a ply |
 | `LMR_MIN_MOVE_INDEX` | 2 | First zero-based move index eligible for LMR |
 | `LMR_MIN_DEPTH` | 2 | Minimum depth eligible for LMR |
 | `LMR_NON_PV_EXTRA` | 1 | Extra reduction at non-PV nodes |
+
+### Correction gravity (src/search/state.rs)
+
+Available under the non-default `correction-gravity` cargo feature. The constants are
+documented here but intentionally absent from `tools/auto_tune/tune.toml`, which tunes
+default-feature builds only.
+
+| Parameter | Default | Meaning |
+| --- | ---: | --- |
+| `CORR_GRAVITY_LIMIT` | 1024 | Slot limit for the gravity integrator |
+| `CORR_BONUS_CAP_PERMILLE` | 16 | Per-update bonus cap, permille of the limit |
+| `CORR_DEPTH_CAP` | 16 | Depth at which the depth weight saturates |
+| `CORR_WEIGHT_NUM` | 10 | Depth weight numerator |
+| `CORR_WEIGHT_DEN` | 55 | Depth weight denominator |
 
 ### UCI interface
 
@@ -459,5 +474,8 @@ runtime tuning path during the match.
 1. Add a variant to `TuneParam` in `src/tune.rs` (name, index, `from_name`).
 2. At the usage site of the constant, replace the read with
    `tune::get_int(TuneParam::NewParam, DEFAULT)`.
-3. Add a `[[params]]` entry to `tools/auto_tune/tune.toml`.
-4. Run `cargo test --all-features` and make sure the default path is unchanged.
+3. Add a row for it to the parameter tables above and enumerate it in the
+   round-trip test in `tests/tune_public.rs`.
+4. Add a `[[params]]` entry to `tools/auto_tune/tune.toml` (default-build
+   constants only; document feature-gated constants with their feature name).
+5. Run `cargo test --all-features` and make sure the default path is unchanged.

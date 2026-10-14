@@ -69,7 +69,14 @@ def write_text_atomic(path, text):
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        for attempt in range(5):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.1 * (attempt + 1))
     except BaseException:
         try:
             os.unlink(temporary)

@@ -841,6 +841,8 @@ impl Engine {
                 self.root_fifty_move_conversion_choice(&ordered_moves, best_move, best_score);
             let mv_str = move_to_uci(&self.st, best_move);
             let elapsed = start.elapsed().as_secs_f64();
+            #[cfg(feature = "node-correction-training")]
+            self.searcher.flush_correction_staging();
             self.searcher
                 .update_correction_history(&self.st, best_score, best_depth);
             return (mv_str, best_score, total_nodes, elapsed);
@@ -1132,13 +1134,21 @@ impl Engine {
             self.root_fifty_move_conversion_choice(&ordered_moves, best_move, best_score);
         let mv_str = move_to_uci(&self.st, best_move);
         let elapsed = start.elapsed().as_secs_f64();
-        // Root moves restore the board, and this non-SMP loop does not train
-        // correction history or replace evaluation configuration before here.
+        // Descendant training can change the root's pawn/side correction slot.
+        // Reuse init_eval only when that training is compiled out entirely.
+        // Staged descendant samples flush first so the fresh evaluation sees
+        // every applied slot change.
+        #[cfg(feature = "node-correction-training")]
+        self.searcher.flush_correction_staging();
         self.searcher.update_correction_history_with_eval(
             &self.st,
             best_score,
             best_depth,
-            Some(init_eval),
+            if cfg!(feature = "node-correction-training") {
+                None
+            } else {
+                Some(init_eval)
+            },
         );
         self.searcher.clear_node_limit();
         #[cfg(feature = "decision-trace")]
@@ -1376,13 +1386,18 @@ impl Engine {
             self.root_fifty_move_conversion_choice(ordered_moves, best_move, best_score);
         let mv_str = move_to_uci(&self.st, best_move);
         let elapsed = start.elapsed().as_secs_f64();
-        // As in single-PV, root state and correction history are unchanged;
-        // retain the initial corrected evaluation, not the evolving search score.
+        // MultiPV has the same descendant-learning dependency as single-PV.
+        #[cfg(feature = "node-correction-training")]
+        self.searcher.flush_correction_staging();
         self.searcher.update_correction_history_with_eval(
             &self.st,
             best_score,
             best_depth,
-            Some(init_eval),
+            if cfg!(feature = "node-correction-training") {
+                None
+            } else {
+                Some(init_eval)
+            },
         );
         self.searcher.clear_node_limit();
         #[cfg(feature = "decision-trace")]

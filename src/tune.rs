@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
-const PARAM_COUNT: usize = 35;
+const PARAM_COUNT: usize = TuneParam::LmrCaptureDivisorMillis as usize + 1;
 const _: () = assert!(PARAM_COUNT <= u64::BITS as usize);
 
 static OVERRIDES: [AtomicI64; PARAM_COUNT] = [const { AtomicI64::new(0) }; PARAM_COUNT];
@@ -44,6 +44,12 @@ pub enum TuneParam {
     AspirationMinDepth,
     AspirationDeltaCp,
     TacticalCheckExtensionMaxDepth,
+    CorrGravityLimit,
+    CorrBonusCapPermille,
+    CorrDepthCap,
+    CorrWeightNum,
+    CorrWeightDen,
+    LmrCaptureDivisorMillis,
 }
 
 impl TuneParam {
@@ -86,6 +92,12 @@ impl TuneParam {
             TuneParam::AspirationMinDepth => "ASPIRATION_MIN_DEPTH",
             TuneParam::AspirationDeltaCp => "ASPIRATION_DELTA_CP",
             TuneParam::TacticalCheckExtensionMaxDepth => "TACTICAL_CHECK_EXTENSION_MAX_DEPTH",
+            TuneParam::CorrGravityLimit => "CORR_GRAVITY_LIMIT",
+            TuneParam::CorrBonusCapPermille => "CORR_BONUS_CAP_PERMILLE",
+            TuneParam::CorrDepthCap => "CORR_DEPTH_CAP",
+            TuneParam::CorrWeightNum => "CORR_WEIGHT_NUM",
+            TuneParam::CorrWeightDen => "CORR_WEIGHT_DEN",
+            TuneParam::LmrCaptureDivisorMillis => "LMR_CAPTURE_DIVISOR_MILLIS",
         }
     }
 
@@ -166,6 +178,16 @@ impl TuneParam {
             "TACTICAL_CHECK_EXTENSION_MAX_DEPTH" | "TACTICAL-CHECK-EXTENSION-MAX-DEPTH" => {
                 Some(TuneParam::TacticalCheckExtensionMaxDepth)
             }
+            "CORR_GRAVITY_LIMIT" | "CORR-GRAVITY-LIMIT" => Some(TuneParam::CorrGravityLimit),
+            "CORR_BONUS_CAP_PERMILLE" | "CORR-BONUS-CAP-PERMILLE" => {
+                Some(TuneParam::CorrBonusCapPermille)
+            }
+            "CORR_DEPTH_CAP" | "CORR-DEPTH-CAP" => Some(TuneParam::CorrDepthCap),
+            "CORR_WEIGHT_NUM" | "CORR-WEIGHT-NUM" => Some(TuneParam::CorrWeightNum),
+            "CORR_WEIGHT_DEN" | "CORR-WEIGHT-DEN" => Some(TuneParam::CorrWeightDen),
+            "LMR_CAPTURE_DIVISOR_MILLIS" | "LMR-CAPTURE-DIVISOR-MILLIS" => {
+                Some(TuneParam::LmrCaptureDivisorMillis)
+            }
             _ => None,
         }
     }
@@ -210,7 +232,14 @@ impl TuneParam {
             31 => TuneParam::LmrNonPvExtra,
             32 => TuneParam::AspirationMinDepth,
             33 => TuneParam::AspirationDeltaCp,
-            _ => TuneParam::TacticalCheckExtensionMaxDepth,
+            34 => TuneParam::TacticalCheckExtensionMaxDepth,
+            35 => TuneParam::CorrGravityLimit,
+            36 => TuneParam::CorrBonusCapPermille,
+            37 => TuneParam::CorrDepthCap,
+            38 => TuneParam::CorrWeightNum,
+            39 => TuneParam::CorrWeightDen,
+            40 => TuneParam::LmrCaptureDivisorMillis,
+            _ => unreachable!("invalid tuning parameter index"),
         }
     }
 }
@@ -251,59 +280,4 @@ pub fn active_overrides() -> Vec<(TuneParam, i64)> {
             )
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn get_returns_default_when_tuning_inactive() {
-        reset();
-        assert!(!is_active());
-        assert_eq!(get_int(TuneParam::ProbCutMinDepth, 8), 8);
-        assert_eq!(get_int(TuneParam::ReverseFutilityBaseCp, 80), 80);
-        assert_eq!(get_int(TuneParam::LmrDivisorMillis, 1800), 1800);
-    }
-
-    #[test]
-    fn set_activates_and_overrides() {
-        set(TuneParam::NullMoveReductionBase, 4);
-        assert!(is_active());
-        assert_eq!(get_int(TuneParam::NullMoveReductionBase, 3), 4);
-        reset();
-        assert!(!is_active());
-        assert_eq!(get_int(TuneParam::NullMoveReductionBase, 3), 3);
-    }
-
-    #[test]
-    fn active_overrides_lists_only_set_values() {
-        reset();
-        set(TuneParam::SeeMarginPerDepthCp, 96);
-        let overrides = active_overrides();
-        assert_eq!(overrides.len(), 1);
-        assert_eq!(overrides[0], (TuneParam::SeeMarginPerDepthCp, 96));
-        reset();
-        assert!(active_overrides().is_empty());
-    }
-
-    #[test]
-    fn zero_and_negative_values_are_real_overrides() {
-        reset();
-        set(TuneParam::LmrDivisorMillis, 0);
-        set(TuneParam::RootRepetitionTieMinScore, -25);
-
-        assert_eq!(get_int(TuneParam::LmrDivisorMillis, 1800), 0);
-        assert_eq!(get_int(TuneParam::RootRepetitionTieMinScore, 300), -25);
-        assert_eq!(
-            active_overrides(),
-            vec![
-                (TuneParam::RootRepetitionTieMinScore, -25),
-                (TuneParam::LmrDivisorMillis, 0),
-            ]
-        );
-
-        reset();
-        assert_eq!(get_int(TuneParam::LmrDivisorMillis, 1800), 1800);
-    }
 }

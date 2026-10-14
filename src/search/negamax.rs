@@ -7,6 +7,7 @@ const LMR_BASE_MILLIS: i64 = 500;
 const LMR_MIN_MOVE_INDEX: i64 = 2;
 const LMR_MIN_DEPTH: i64 = 2;
 const LMR_NON_PV_EXTRA: i64 = 1;
+const LMR_CAPTURE_DIVISOR_MILLIS: i64 = 1200;
 const TACTICAL_CHECK_EXTENSION_MAX_DEPTH: i64 = 2;
 const IMPROVING_MARGIN_NUMERATOR: i64 = 3;
 const IMPROVING_MARGIN_DENOMINATOR: i64 = 4;
@@ -54,8 +55,13 @@ pub(super) fn lmr_policy_eligible(
     actual_depth: i32,
     is_quiet: bool,
     in_check: bool,
+    gives_check: bool,
+    is_pv: bool,
 ) -> bool {
-    if !is_quiet || in_check {
+    if gives_check {
+        return false;
+    }
+    if !is_quiet && (in_check || is_pv) {
         return false;
     }
     let min_move_index = tune::get_int(TuneParam::LmrMinMoveIndex, LMR_MIN_MOVE_INDEX);
@@ -64,9 +70,13 @@ pub(super) fn lmr_policy_eligible(
 }
 
 #[inline(always)]
-pub(super) fn lmr_reduction(move_index: usize, actual_depth: i32, is_pv: bool) -> i32 {
+fn lmr_reduction_with_divisor(
+    divisor: f64,
+    move_index: usize,
+    actual_depth: i32,
+    is_pv: bool,
+) -> i32 {
     let base_millis = tune::get_int(TuneParam::LmrBaseMillis, LMR_BASE_MILLIS) as f64;
-    let divisor = tune::get_int(TuneParam::LmrDivisorMillis, 1800) as f64;
     let non_pv_extra = tune::get_int(TuneParam::LmrNonPvExtra, LMR_NON_PV_EXTRA) as i32;
     let max_reduction = (actual_depth - 1).max(1);
     let reduction = (base_millis / 1000.0
@@ -78,6 +88,21 @@ pub(super) fn lmr_reduction(move_index: usize, actual_depth: i32, is_pv: bool) -
     } else {
         (reduction + non_pv_extra).clamp(1, max_reduction)
     }
+}
+
+#[inline(always)]
+pub(super) fn lmr_reduction(move_index: usize, actual_depth: i32, is_pv: bool) -> i32 {
+    let divisor = tune::get_int(TuneParam::LmrDivisorMillis, 1800) as f64;
+    lmr_reduction_with_divisor(divisor, move_index, actual_depth, is_pv)
+}
+
+#[inline(always)]
+pub(super) fn lmr_reduction_non_quiet(move_index: usize, actual_depth: i32, is_pv: bool) -> i32 {
+    let divisor = tune::get_int(
+        TuneParam::LmrCaptureDivisorMillis,
+        LMR_CAPTURE_DIVISOR_MILLIS,
+    ) as f64;
+    lmr_reduction_with_divisor(divisor, move_index, actual_depth, is_pv)
 }
 
 /// History-scaled LMR: moves with strong history are reduced less (down to no
@@ -981,6 +1006,8 @@ macro_rules! negamax_mode_body {
         let orig_alpha = $alpha;
         let mut best_score = -INF;
         let mut best_move = None;
+        #[cfg(feature = "node-correction-training")]
+        let mut corr_best_quiet: Option<Move> = None;
         let mut legal_moves_seen = 0usize;
         let mut quiets_tried = Self::take_buf(&mut $this.quiets_bufs, $ply);
         quiets_tried.clear();
@@ -1066,6 +1093,8 @@ macro_rules! negamax_mode_body {
                 .unwrap_or(0);
             let move_ext = combine_move_extensions(tactical_move_ext, singular_extension);
 
+            let move_gives_check = !is_quiet && special_move_gives_check_mode::<CHESS960>($st, mv);
+
             let st_before = *$st;
             let legal = if pseudo_moves {
                 perf_time!(
@@ -1119,7 +1148,14 @@ macro_rules! negamax_mode_body {
             let lmr_eligible = $this.lmr_enabled()
                 && excluded_move.is_none()
                 && move_index > 0
-                && lmr_policy_eligible(move_index, actual_depth, is_quiet, in_check);
+                && lmr_policy_eligible(
+                    move_index,
+                    actual_depth,
+                    is_quiet,
+                    in_check,
+                    move_gives_check,
+                    is_pv,
+                );
             let s = if move_index == 0 {
                 -$this.$negamax_mode::<CHESS960, NODE_LIMITED, E>(
                     $st,
@@ -1134,15 +1170,23 @@ macro_rules! negamax_mode_body {
             } else if lmr_eligible {
                 let (lmr_hfk, lmr_htk) =
                     from_to_key(move_sr(mv), move_sc(mv), move_er(mv), move_ec(mv));
-                let r = lmr_reduction_with_history(
-                    move_index,
-                    actual_depth,
-                    is_pv,
-                    $this.history[lmr_hfk][lmr_htk],
-                );
+                let r = if is_quiet {
+                    lmr_reduction_with_history(
+                        move_index,
+                        actual_depth,
+                        is_pv,
+                        $this.history[lmr_hfk][lmr_htk],
+                    )
+                } else {
+                    lmr_reduction_non_quiet(move_index, actual_depth, is_pv)
+                };
                 #[cfg(feature = "search-debug")]
                 {
-                    let base_reduction = lmr_reduction(move_index, actual_depth, is_pv);
+                    let base_reduction = if is_quiet {
+                        lmr_reduction(move_index, actual_depth, is_pv)
+                    } else {
+                        lmr_reduction_non_quiet(move_index, actual_depth, is_pv)
+                    };
                     if r == base_reduction {
                         $this.debug.stats.lmr_unchanged_reductions += 1;
                     } else if r > base_reduction {
@@ -1153,8 +1197,11 @@ macro_rules! negamax_mode_body {
                     if r == 0 {
                         $this.debug.stats.lmr_zero_reductions += 1;
                     }
-                    let history = $this.history[lmr_hfk][lmr_htk]
-                        .clamp(-LMR_HISTORY_CLAMP, LMR_HISTORY_CLAMP);
+                    let history = if is_quiet {
+                        $this.history[lmr_hfk][lmr_htk].clamp(-LMR_HISTORY_CLAMP, LMR_HISTORY_CLAMP)
+                    } else {
+                        0
+                    };
                     let unclamped_reduction = base_reduction - history / LMR_HISTORY_DIVISOR;
                     if lmr_reduction_is_saturated(unclamped_reduction, (actual_depth - 1).max(0)) {
                         $this.debug.stats.lmr_saturated_reductions += 1;
@@ -1261,6 +1308,10 @@ macro_rules! negamax_mode_body {
             if s > best_score {
                 best_score = s;
                 best_move = Some(mv);
+                #[cfg(feature = "node-correction-training")]
+                {
+                    corr_best_quiet = if is_quiet { Some(mv) } else { None };
+                }
                 if s > $alpha {
                     $alpha = s;
                     if $alpha >= beta {
@@ -1355,11 +1406,103 @@ macro_rules! negamax_mode_body {
                 )
             );
         }
+        // A node only trains when its best move stayed quiet: track the quiet
+        // status of the best-scoring move while the loop knows it, then hand
+        // that to the gate (capture/promotion classification needs the
+        // const-generic variant this plain method cannot name).
+        #[cfg(feature = "node-correction-training")]
+        {
+            let corr_quiet = best_move.is_some_and(|mv| Some(mv) == corr_best_quiet);
+            $this.train_correction_from_node(
+                $st,
+                best_score,
+                actual_depth,
+                eval_score,
+                flag,
+                in_check,
+                excluded_move.is_some()
+                    || $this.restricted_verification_active()
+                    || $this.probcut_verification,
+                corr_quiet,
+            );
+        }
         best_score
     }};
 }
 
 impl Searcher {
+    #[cfg(feature = "node-correction-training")]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn train_correction_from_node(
+        &mut self,
+        st: &BoardState,
+        best_score: i32,
+        depth: i32,
+        eval: i32,
+        flag: u8,
+        in_check: bool,
+        verification_active: bool,
+        best_move_quiet: bool,
+    ) -> bool {
+        #[cfg(feature = "search-debug")]
+        {
+            if self.debug.disable_corr_node_train {
+                return false;
+            }
+            self.debug.stats.corr_node_exits += 1;
+        }
+        #[cfg(feature = "search-debug")]
+        if verification_active {
+            self.debug.stats.corr_node_reject_verification += 1;
+        }
+        #[cfg(feature = "search-debug")]
+        if in_check {
+            self.debug.stats.corr_node_reject_check += 1;
+        }
+        if verification_active || in_check || !best_move_quiet {
+            #[cfg(feature = "search-debug")]
+            if !verification_active && !in_check {
+                self.debug.stats.corr_node_reject_noisy += 1;
+            }
+            return false;
+        }
+        let direction_ok = match flag {
+            TT_ALPHA => best_score < eval,
+            TT_BETA => best_score > eval,
+            TT_EXACT => true,
+            _ => false,
+        };
+        if !direction_ok {
+            #[cfg(feature = "search-debug")]
+            {
+                self.debug.stats.corr_node_reject_direction += 1;
+            }
+            return false;
+        }
+        if !self.corr_hist_enabled() || depth < 3 || best_score.abs() > MATE / 2 {
+            #[cfg(feature = "search-debug")]
+            {
+                self.debug.stats.corr_node_update_rejected += 1;
+            }
+            return false;
+        }
+        let diff = i64::from(best_score) - i64::from(eval);
+        if diff.abs() >= 500 {
+            #[cfg(feature = "search-debug")]
+            {
+                self.debug.stats.corr_node_update_rejected += 1;
+            }
+            return false;
+        }
+        let idx = corr_idx(compute_pawn_hash(st), st.w);
+        self.stage_correction_delta(idx, diff, depth);
+        #[cfg(feature = "search-debug")]
+        {
+            self.debug.stats.corr_node_trains += 1;
+        }
+        true
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn negamax(
         &mut self,
