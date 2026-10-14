@@ -67,6 +67,7 @@ The tunable constants and their defaults:
 | Parameter | Default | Meaning |
 | --- | ---: | --- |
 | `SEE_MARGIN_PER_DEPTH_CP` | 80 | SEE pruning margin per depth |
+| `HISTORY_BONUS_MULT` | 230 | Linear quiet-history bonus per depth (mult·depth, cap 16384) |
 | `HISTORY_PRUNE_MARGIN_PER_DEPTH` | 1024 | History pruning margin per depth |
 | `HISTORY_PRUNE_MAX_DEPTH` | 5 | Maximum history pruning depth |
 
