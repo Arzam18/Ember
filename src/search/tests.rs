@@ -426,6 +426,26 @@ fn lmr_history_adjustment_stays_within_depth_bounds() {
 }
 
 #[test]
+fn history_bonus_scales_linearly_with_depth_and_saturates() {
+    // Private contract: the quiet-history update magnitude grows linearly with
+    // depth so standard search depths produce meaningful bonuses, and it
+    // saturates at the table halving limit; a TSV cannot observe the
+    // per-update magnitude or the tuner override path.
+    tune::reset();
+    assert_eq!(history_bonus(1), 230);
+    assert_eq!(history_bonus(4), 920);
+    assert_eq!(history_bonus(10), 2300);
+    assert_eq!(history_bonus(71), 16330);
+    assert_eq!(history_bonus(72), 16384);
+    assert_eq!(history_bonus(500), 16384);
+    tune::set(TuneParam::HistoryBonusMult, 50);
+    assert_eq!(history_bonus(4), 200);
+    tune::set(TuneParam::HistoryBonusMult, 1000);
+    assert_eq!(history_bonus(40), 16384);
+    tune::reset();
+}
+
+#[test]
 fn lmr_saturation_covers_both_clamp_boundaries() {
     // Private contract: debug saturation counts only adjustments changed by
     // either clamp. Values already on a boundary are not saturated.

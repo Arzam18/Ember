@@ -136,6 +136,15 @@ pub(super) fn lmr_needs_full_depth_research(reduction: i32, score: i32, alpha: i
     reduction > 0 && score > alpha
 }
 
+const HISTORY_BONUS_MULT: i32 = 230;
+const HISTORY_BONUS_MAX: i32 = 16384;
+
+#[inline(always)]
+pub(super) fn history_bonus(depth: i32) -> i32 {
+    let mult = tune::get_int(TuneParam::HistoryBonusMult, HISTORY_BONUS_MULT as i64) as i32;
+    (mult * depth).min(HISTORY_BONUS_MAX)
+}
+
 #[inline(always)]
 pub(super) fn tactical_check_extension_candidate(
     actual_depth: i32,
@@ -1325,7 +1334,7 @@ macro_rules! negamax_mode_body {
                             }
                             let (fk, tk) =
                                 from_to_key(move_sr(mv), move_sc(mv), move_er(mv), move_ec(mv));
-                            let bonus = (actual_depth * actual_depth).min(512);
+                            let bonus = history_bonus(actual_depth);
                             $this.history[fk][tk] += bonus;
                             if $this.history[fk][tk] > 16384 {
                                 for a in 0..64 {

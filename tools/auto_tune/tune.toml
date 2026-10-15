@@ -205,6 +205,13 @@ max = 160
 step = 10
 
 [[params]]
+name = "HISTORY_BONUS_MULT"
+base = 230
+min = 50
+max = 650
+step = 10
+
+[[params]]
 name = "HISTORY_PRUNE_MARGIN_PER_DEPTH"
 base = 1024
 min = 512

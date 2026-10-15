@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
-const PARAM_COUNT: usize = TuneParam::LmrCaptureDivisorMillis as usize + 1;
+const PARAM_COUNT: usize = TuneParam::HistoryBonusMult as usize + 1;
 const _: () = assert!(PARAM_COUNT <= u64::BITS as usize);
 
 static OVERRIDES: [AtomicI64; PARAM_COUNT] = [const { AtomicI64::new(0) }; PARAM_COUNT];
@@ -50,6 +50,7 @@ pub enum TuneParam {
     CorrWeightNum,
     CorrWeightDen,
     LmrCaptureDivisorMillis,
+    HistoryBonusMult,
 }
 
 impl TuneParam {
@@ -98,6 +99,7 @@ impl TuneParam {
             TuneParam::CorrWeightNum => "CORR_WEIGHT_NUM",
             TuneParam::CorrWeightDen => "CORR_WEIGHT_DEN",
             TuneParam::LmrCaptureDivisorMillis => "LMR_CAPTURE_DIVISOR_MILLIS",
+            TuneParam::HistoryBonusMult => "HISTORY_BONUS_MULT",
         }
     }
 
@@ -188,6 +190,7 @@ impl TuneParam {
             "LMR_CAPTURE_DIVISOR_MILLIS" | "LMR-CAPTURE-DIVISOR-MILLIS" => {
                 Some(TuneParam::LmrCaptureDivisorMillis)
             }
+            "HISTORY_BONUS_MULT" | "HISTORY-BONUS-MULT" => Some(TuneParam::HistoryBonusMult),
             _ => None,
         }
     }
@@ -239,6 +242,7 @@ impl TuneParam {
             38 => TuneParam::CorrWeightNum,
             39 => TuneParam::CorrWeightDen,
             40 => TuneParam::LmrCaptureDivisorMillis,
+            41 => TuneParam::HistoryBonusMult,
             _ => unreachable!("invalid tuning parameter index"),
         }
     }

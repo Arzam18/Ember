@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -9,10 +10,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONVERTER_PATH = REPO_ROOT / "training" / "en" / "v2" / "nnue-pytorch_to_ember.py"
+V1_CONVERTER_PATH = REPO_ROOT / "training" / "en" / "v1" / "convert_bullet_to_nnue_v1.py"
 
 
-def load_converter():
-    spec = importlib.util.spec_from_file_location("nnue_converter", CONVERTER_PATH)
+def load_converter(path=CONVERTER_PATH, name="nnue_converter"):
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -98,6 +100,26 @@ class NnueConverterTests(unittest.TestCase):
             self.assertEqual(info, {"bytes": 8})
             self.assertEqual(output.read_bytes(), b"verified")
             self.assertEqual(list(Path(directory).glob(".network.nnue.*.tmp")), [])
+
+
+@unittest.skipUnless(V1_CONVERTER_PATH.is_file(), "v1 bullet converter not present")
+class NnueConverterV1HeaderTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.converter = load_converter(V1_CONVERTER_PATH, "nnue_converter_v1")
+
+    def test_header_size_accounts_for_v10_extended_header(self):
+        header = struct.pack("<II", 0x4E4E5545, 10)
+        header += bytes([0x80 | 0x01])
+        header += struct.pack("<HHH", 1024, 0, 0)
+        header += bytes([16, 1])
+        header += bytes([0])
+
+        self.assertEqual(
+            self.converter.get_header_size(header + b"\0" * 8),
+            18,
+            "converter would start reading weights from header bytes",
+        )
 
 
 if __name__ == "__main__":
