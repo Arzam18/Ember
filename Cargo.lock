@@ -35,7 +35,7 @@ checksum = "276b4804775347af35852c80665ad23d62a9ee742a14656e7da6a7b1cee74ee9"
 
 [[package]]
 name = "ember-chess"
-version = "1.3.1"
+version = "1.4.0"
 dependencies = [
  "cozy-chess",
  "mimalloc",
