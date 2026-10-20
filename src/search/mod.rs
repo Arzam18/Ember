@@ -114,6 +114,7 @@ pub struct Searcher {
     pub killers: [[Option<Move>; 2]; MAX_PLY],
     pub history: [[i32; 64]; 64],
     pub counter_move: [[Option<Move>; 64]; 13],
+    pub capture_history: [[[i32; 13]; 64]; 13],
     pub corr_hist: [i32; CORR_HIST_SIZE * 2],
     // Descendant training stages its samples per pawn slot instead of
     // writing immediately: the deepest residual per slot is applied only at

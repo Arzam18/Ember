@@ -4,6 +4,7 @@ use super::*;
 pub struct SearchLearning {
     pub(super) history: [[i32; 64]; 64],
     pub(super) counter_move: [[Option<Move>; 64]; 13],
+    pub(super) capture_history: [[[i32; 13]; 64]; 13],
     pub(super) corr_hist: [i32; CORR_HIST_SIZE * 2],
 }
 
@@ -802,12 +803,15 @@ mod tests {
         searcher.corr_hist[123] = value / 10;
         searcher.corr_hist[456] = -value / 10;
         searcher.counter_move[7][31] = Some(crate::board::encode_move(6, 0, 5, 0, 0));
+        searcher.capture_history[7][31][8] = value;
+        searcher.capture_history[1][12][2] = -value;
     }
 
     fn assert_learning(actual: &SearchLearning, expected: &Searcher) {
         assert_eq!(actual.history, expected.history);
         assert_eq!(actual.corr_hist, expected.corr_hist);
         assert_eq!(actual.counter_move, expected.counter_move);
+        assert_eq!(actual.capture_history, expected.capture_history);
     }
 
     #[test]

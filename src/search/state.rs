@@ -116,6 +116,7 @@ impl Searcher {
             killers: [[None; 2]; MAX_PLY],
             history: [[0i32; 64]; 64],
             counter_move: [[None; 64]; 13],
+            capture_history: [[[0i32; 13]; 64]; 13],
             corr_hist: [0i32; CORR_HIST_SIZE * 2],
             #[cfg(feature = "node-correction-training")]
             corr_staged_depth: [0u8; CORR_HIST_SIZE * 2],
@@ -396,6 +397,7 @@ impl Searcher {
         SearchLearning {
             history: self.history,
             counter_move: self.counter_move,
+            capture_history: self.capture_history,
             corr_hist: self.corr_hist,
         }
     }
@@ -405,6 +407,7 @@ impl Searcher {
         self.discard_correction_staging();
         self.history = learning.history;
         self.counter_move = learning.counter_move;
+        self.capture_history = learning.capture_history;
         self.corr_hist = learning.corr_hist;
     }
 
@@ -551,6 +554,7 @@ impl Searcher {
         self.killers = [[None; 2]; MAX_PLY];
         self.history = [[0; 64]; 64];
         self.counter_move = [[None; 64]; 13];
+        self.capture_history = [[[0; 13]; 64]; 13];
         self.corr_hist = [0; CORR_HIST_SIZE * 2];
     }
 
