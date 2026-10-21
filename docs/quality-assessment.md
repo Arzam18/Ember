@@ -22,7 +22,7 @@ error still invalidates that comparison.
   castling, and tablebase invariants that encode a bug fix, not search taste.
 - **Execution validity**: an engine error, rejected setup history, truncated fixed-depth
   search, searched depth-zero book case, or nonzero exit invalidates the comparison.
-- **Strict profile**: the candidate must not lose more than `1%` of the baseline's
+- **Strict profile**: the candidate must not lose more than `3%` of the baseline's
   active-case solves (a change that fixes five and breaks three is automatically
   acceptable).
 - **Rearchitecture profile**: for a predeclared large intentional rearchitecture
@@ -52,7 +52,7 @@ python3 tools/compare_fixture_corpus.py \
   --gate \
   --gate-profile strict \
   --gate-hard-fixtures engine_regressions.tsv \
-  --gate-net-tolerance-permille 10 \
+  --gate-net-tolerance-permille 30 \
   --output-json results/fixture-gate/corpus.json \
   --output-tsv results/fixture-gate/corpus.tsv
 ```

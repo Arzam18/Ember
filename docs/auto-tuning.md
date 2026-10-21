@@ -29,7 +29,7 @@ The tunable constants and their defaults:
 
 | Parameter | Default | Meaning |
 | --- | ---: | --- |
-| `QSEARCH_DELTA_MARGIN_CP` | 975 | Delta-pruning margin in centipawns |
+| `QSEARCH_DELTA_MARGIN_CP` | 1125 | Delta-pruning margin in centipawns |
 | `QSEARCH_CHECK_CAP_DEPTH` | 4 | Maximum checking continuation depth |
 | `QSEARCH_SEE_THRESHOLD_CP` | 0 | Captures below this SEE score are pruned |
 
@@ -79,7 +79,7 @@ The tunable constants and their defaults:
 | `TACTICAL_CHECK_EXTENSION_MAX_DEPTH` | 2 | Max depth for the first tactical checking move extension |
 | `LMP_MAX_DEPTH` | 8 | Maximum late move pruning depth |
 | `LMP_MOVE_COUNT_SCALE_PERMILLE` | 1000 | Scale applied to the LMP move-count table |
-| `LMP_KING_PRESSURE_LIMIT` | 3 | Exclusive king-pressure limit for LMP |
+| `LMP_KING_PRESSURE_LIMIT` | 1 | Exclusive king-pressure limit for LMP |
 | `IID_MIN_DEPTH` | 4 | Minimum depth for internal iterative deepening |
 | `LMR_DIVISOR_MILLIS` | 1800 | LMR reduction divisor (ln(move)·ln(depth)·1000 / divisor) |
 | `LMR_CAPTURE_DIVISOR_MILLIS` | 1200 | LMR divisor for non-quiet moves at non-PV nodes |
