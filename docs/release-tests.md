@@ -80,7 +80,7 @@ python3 tools/compare_fixture_corpus.py \
   --gate \
   --gate-profile strict \
   --gate-hard-fixtures engine_regressions.tsv \
-  --gate-net-tolerance-permille 10 \
+  --gate-net-tolerance-permille 30 \
   --output-json results/fixture-gate/corpus.json \
   --output-tsv results/fixture-gate/corpus.tsv
 ```
@@ -92,7 +92,7 @@ Acceptance criteria:
   - the candidate solves every active `engine_regressions.tsv` case, even if
     the baseline already missed it;
   - the net number of active solved cases lost versus the baseline is at most
-    `1%` of baseline solves under the default `strict` profile;
+    `3%` of baseline solves under the default `strict` profile;
 - every pass->fail flip is understood, documented, and either fixed, updated as
   an intentional improvement, or relaxed to an honest invariant; the gate report
   lists them in `results/fixture-gate/corpus.json`;

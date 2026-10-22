@@ -125,6 +125,19 @@ pub(super) fn lmr_reduction_with_history(
     (base - history / LMR_HISTORY_DIVISOR).clamp(0, max_reduction)
 }
 
+#[inline(always)]
+pub(super) fn lmr_reduction_non_quiet_with_history(
+    move_index: usize,
+    actual_depth: i32,
+    is_pv: bool,
+    history: i32,
+) -> i32 {
+    let base = lmr_reduction_non_quiet(move_index, actual_depth, is_pv);
+    let history = history.clamp(-LMR_HISTORY_CLAMP, LMR_HISTORY_CLAMP);
+    let max_reduction = (actual_depth - 1).max(0);
+    (base - history / LMR_HISTORY_DIVISOR).clamp(0, max_reduction)
+}
+
 #[cfg(any(feature = "search-debug", test))]
 #[inline(always)]
 pub(super) fn lmr_reduction_is_saturated(unclamped_reduction: i32, max_reduction: i32) -> bool {
@@ -143,6 +156,23 @@ const HISTORY_BONUS_MAX: i32 = 16384;
 pub(super) fn history_bonus(depth: i32) -> i32 {
     let mult = tune::get_int(TuneParam::HistoryBonusMult, HISTORY_BONUS_MULT as i64) as i32;
     (mult * depth).min(HISTORY_BONUS_MAX)
+}
+
+#[inline(always)]
+fn capture_history_index(st: &BoardState, mv: Move) -> (usize, usize, usize) {
+    let fpi = st.mailbox[move_from(mv)];
+    let tpi = st.mailbox[move_to(mv)];
+    let att = if fpi != EMPTY_SQ {
+        piece_to_idx(piece_type(fpi))
+    } else {
+        0
+    };
+    let vic = if tpi != EMPTY_SQ {
+        piece_to_idx(piece_type(tpi))
+    } else {
+        0
+    };
+    (att, move_to(mv), vic)
 }
 
 #[inline(always)]
@@ -952,7 +982,8 @@ macro_rules! negamax_mode_body {
                 let tpi = $st.mailbox[to];
                 let fpi = $st.mailbox[from];
                 let is_promo = is_promotion_move(fpi, mv);
-                if move_is_capture::<CHESS960>($st, fpi, mv, to, tpi) || is_promo {
+                let is_capture = move_is_capture::<CHESS960>($st, fpi, mv, to, tpi);
+                if is_capture || is_promo {
                     let v = capture_victim_value::<CHESS960>($st, fpi, mv, to, tpi);
                     let a = if fpi != EMPTY_SQ {
                         piece_val(piece_type(fpi))
@@ -969,6 +1000,11 @@ macro_rules! negamax_mode_body {
                         s += 2_000_000 + v * 10 - a + see_sc;
                     } else {
                         s += 500_000 + v * 10 - a;
+                    }
+                    if is_capture {
+                        let (ch_att, ch_to, ch_vic) = capture_history_index($st, mv);
+                        s += $this.capture_history[ch_att][ch_to][ch_vic]
+                            .clamp(-HISTORY_BONUS_MAX, HISTORY_BONUS_MAX);
                     }
                     if is_promo {
                         s += 1_500_000 + promotion_value(mv);
@@ -1020,6 +1056,8 @@ macro_rules! negamax_mode_body {
         let mut legal_moves_seen = 0usize;
         let mut quiets_tried = Self::take_buf(&mut $this.quiets_bufs, $ply);
         quiets_tried.clear();
+        let mut captures_tried = Self::take_buf(&mut $this.caps_bufs, $ply);
+        captures_tried.clear();
 
         for &(_, mv) in scored.iter() {
             if $this.stop_requested() {
@@ -1186,6 +1224,14 @@ macro_rules! negamax_mode_body {
                         is_pv,
                         $this.history[lmr_hfk][lmr_htk],
                     )
+                } else if capture {
+                    let (ch_att, ch_to, ch_vic) = capture_history_index(&st_before, mv);
+                    lmr_reduction_non_quiet_with_history(
+                        move_index,
+                        actual_depth,
+                        is_pv,
+                        $this.capture_history[ch_att][ch_to][ch_vic],
+                    )
                 } else {
                     lmr_reduction_non_quiet(move_index, actual_depth, is_pv)
                 };
@@ -1208,6 +1254,10 @@ macro_rules! negamax_mode_body {
                     }
                     let history = if is_quiet {
                         $this.history[lmr_hfk][lmr_htk].clamp(-LMR_HISTORY_CLAMP, LMR_HISTORY_CLAMP)
+                    } else if capture {
+                        let (ch_att, ch_to, ch_vic) = capture_history_index(&st_before, mv);
+                        $this.capture_history[ch_att][ch_to][ch_vic]
+                            .clamp(-LMR_HISTORY_CLAMP, LMR_HISTORY_CLAMP)
                     } else {
                         0
                     };
@@ -1312,6 +1362,8 @@ macro_rules! negamax_mode_body {
 
             if is_quiet {
                 quiets_tried.push(mv);
+            } else if capture {
+                captures_tried.push(mv);
             }
 
             if s > best_score {
@@ -1324,50 +1376,81 @@ macro_rules! negamax_mode_body {
                 if s > $alpha {
                     $alpha = s;
                     if $alpha >= beta {
-                        if is_quiet
-                            && excluded_move.is_none()
-                            && !$this.restricted_verification_active()
-                        {
-                            if $this.killers[$ply][0] != Some(mv) {
-                                $this.killers[$ply][1] = $this.killers[$ply][0];
-                                $this.killers[$ply][0] = Some(mv);
-                            }
-                            let (fk, tk) =
-                                from_to_key(move_sr(mv), move_sc(mv), move_er(mv), move_ec(mv));
-                            let bonus = history_bonus(actual_depth);
-                            $this.history[fk][tk] += bonus;
-                            if $this.history[fk][tk] > 16384 {
-                                for a in 0..64 {
-                                    for b in 0..64 {
-                                        $this.history[a][b] /= 2;
-                                    }
+                        if excluded_move.is_none() && !$this.restricted_verification_active() {
+                            if is_quiet {
+                                if $this.killers[$ply][0] != Some(mv) {
+                                    $this.killers[$ply][1] = $this.killers[$ply][0];
+                                    $this.killers[$ply][0] = Some(mv);
                                 }
-                            }
-                            for &qmv in &quiets_tried {
-                                if qmv == mv {
-                                    continue;
-                                }
-                                let (qfk, qtk) = from_to_key(
-                                    move_sr(qmv),
-                                    move_sc(qmv),
-                                    move_er(qmv),
-                                    move_ec(qmv),
-                                );
-                                $this.history[qfk][qtk] -= bonus;
-                                if $this.history[qfk][qtk] < -16384 {
+                                let (fk, tk) =
+                                    from_to_key(move_sr(mv), move_sc(mv), move_er(mv), move_ec(mv));
+                                let bonus = history_bonus(actual_depth);
+                                $this.history[fk][tk] += bonus;
+                                if $this.history[fk][tk] > 16384 {
                                     for a in 0..64 {
                                         for b in 0..64 {
                                             $this.history[a][b] /= 2;
                                         }
                                     }
                                 }
+                                for &qmv in &quiets_tried {
+                                    if qmv == mv {
+                                        continue;
+                                    }
+                                    let (qfk, qtk) = from_to_key(
+                                        move_sr(qmv),
+                                        move_sc(qmv),
+                                        move_er(qmv),
+                                        move_ec(qmv),
+                                    );
+                                    $this.history[qfk][qtk] -= bonus;
+                                    if $this.history[qfk][qtk] < -16384 {
+                                        for a in 0..64 {
+                                            for b in 0..64 {
+                                                $this.history[a][b] /= 2;
+                                            }
+                                        }
+                                    }
+                                }
+                                let p_idx = if fpi != EMPTY_SQ {
+                                    piece_to_idx(piece_type(fpi))
+                                } else {
+                                    0
+                                };
+                                $this.counter_move[p_idx][to] = Some(mv);
+                            } else if capture {
+                                let (ch_att, ch_to, ch_vic) = capture_history_index($st, mv);
+                                let bonus = history_bonus(actual_depth);
+                                $this.capture_history[ch_att][ch_to][ch_vic] += bonus;
+                                if $this.capture_history[ch_att][ch_to][ch_vic] > HISTORY_BONUS_MAX
+                                {
+                                    for a in 0..13 {
+                                        for b in 0..64 {
+                                            for c in 0..13 {
+                                                $this.capture_history[a][b][c] /= 2;
+                                            }
+                                        }
+                                    }
+                                }
+                                for &cmv in captures_tried.iter() {
+                                    if cmv == mv {
+                                        continue;
+                                    }
+                                    let (c_att, c_to, c_vic) = capture_history_index($st, cmv);
+                                    $this.capture_history[c_att][c_to][c_vic] -= bonus;
+                                    if $this.capture_history[c_att][c_to][c_vic]
+                                        < -HISTORY_BONUS_MAX
+                                    {
+                                        for a in 0..13 {
+                                            for b in 0..64 {
+                                                for c in 0..13 {
+                                                    $this.capture_history[a][b][c] /= 2;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            let p_idx = if fpi != EMPTY_SQ {
-                                piece_to_idx(piece_type(fpi))
-                            } else {
-                                0
-                            };
-                            $this.counter_move[p_idx][to] = Some(mv);
                         }
                         break;
                     }
@@ -1377,6 +1460,7 @@ macro_rules! negamax_mode_body {
 
         Self::return_buf(&mut $this.scored_bufs, $ply, scored);
         Self::return_buf(&mut $this.quiets_bufs, $ply, quiets_tried);
+        Self::return_buf(&mut $this.caps_bufs, $ply, captures_tried);
 
         if $this.stopped.load(Ordering::Relaxed) {
             return 0;
