@@ -262,14 +262,14 @@ Ratings are not comparable between the three lists.
 
 | Version | Rating | Games |
 | --- | ---: | ---: |
-| Ember 1.3.1 64-bit | 3324 ± 62 | 60 |
+| Ember 1.3.1 64-bit | 3343 ± 53 | 82 |
 | Ember 1.3.0 64-bit | 3154 ± 20 | 541 |
 
-**[CCRL Blitz (2m+1s)](https://computerchess.org.uk/ccrl/404/)** — Computed 2026-10-03
+**[CCRL Blitz (2m+1s)](https://computerchess.org.uk/ccrl/404/)** — Computed 2026-10-15
 
 | Version | Rating | Games |
 | --- | ---: | ---: |
-| Ember 1.3.1 64-bit | 3389 ± 16 | 1024 |
+| Ember 1.3.1 64-bit | 3390 ± 16 | 1088 |
 | Ember 1.1.2 64-bit | 3020 ± 17 | 1056 |
 | Ember 0.9.2 64-bit | 1928 ± 20 | 906 |
 
