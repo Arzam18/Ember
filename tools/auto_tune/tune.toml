@@ -310,3 +310,31 @@ min = 0
 max = 2
 step = 1
 allow_nonpositive = true
+
+[[params]]
+name = "KING_SHIELD_PENALTY"
+base = 4000
+min = 0
+max = 8000
+step = 250
+
+[[params]]
+name = "OUTPOST_BONUS"
+base = 3000
+min = 0
+max = 6000
+step = 250
+
+[[params]]
+name = "PASSED_PUSH_BONUS"
+base = 3000
+min = 0
+max = 6000
+step = 250
+
+[[params]]
+name = "ATTACK_ORDER_BONUS"
+base = 4000
+min = 0
+max = 8000
+step = 250
