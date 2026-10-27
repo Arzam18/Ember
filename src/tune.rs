@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
-const PARAM_COUNT: usize = TuneParam::HistoryBonusMult as usize + 1;
+const PARAM_COUNT: usize = TuneParam::AttackOrderBonus as usize + 1;
 const _: () = assert!(PARAM_COUNT <= u64::BITS as usize);
 
 static OVERRIDES: [AtomicI64; PARAM_COUNT] = [const { AtomicI64::new(0) }; PARAM_COUNT];
@@ -51,6 +51,10 @@ pub enum TuneParam {
     CorrWeightDen,
     LmrCaptureDivisorMillis,
     HistoryBonusMult,
+    KingShieldPenalty,
+    OutpostBonus,
+    PassedPushBonus,
+    AttackOrderBonus,
 }
 
 impl TuneParam {
@@ -100,6 +104,10 @@ impl TuneParam {
             TuneParam::CorrWeightDen => "CORR_WEIGHT_DEN",
             TuneParam::LmrCaptureDivisorMillis => "LMR_CAPTURE_DIVISOR_MILLIS",
             TuneParam::HistoryBonusMult => "HISTORY_BONUS_MULT",
+            TuneParam::KingShieldPenalty => "KING_SHIELD_PENALTY",
+            TuneParam::OutpostBonus => "OUTPOST_BONUS",
+            TuneParam::PassedPushBonus => "PASSED_PUSH_BONUS",
+            TuneParam::AttackOrderBonus => "ATTACK_ORDER_BONUS",
         }
     }
 
@@ -191,6 +199,10 @@ impl TuneParam {
                 Some(TuneParam::LmrCaptureDivisorMillis)
             }
             "HISTORY_BONUS_MULT" | "HISTORY-BONUS-MULT" => Some(TuneParam::HistoryBonusMult),
+            "KING_SHIELD_PENALTY" | "KING-SHIELD-PENALTY" => Some(TuneParam::KingShieldPenalty),
+            "OUTPOST_BONUS" | "OUTPOST-BONUS" => Some(TuneParam::OutpostBonus),
+            "PASSED_PUSH_BONUS" | "PASSED-PUSH-BONUS" => Some(TuneParam::PassedPushBonus),
+            "ATTACK_ORDER_BONUS" | "ATTACK-ORDER-BONUS" => Some(TuneParam::AttackOrderBonus),
             _ => None,
         }
     }
@@ -243,6 +255,10 @@ impl TuneParam {
             39 => TuneParam::CorrWeightDen,
             40 => TuneParam::LmrCaptureDivisorMillis,
             41 => TuneParam::HistoryBonusMult,
+            42 => TuneParam::KingShieldPenalty,
+            43 => TuneParam::OutpostBonus,
+            44 => TuneParam::PassedPushBonus,
+            45 => TuneParam::AttackOrderBonus,
             _ => unreachable!("invalid tuning parameter index"),
         }
     }

@@ -88,6 +88,15 @@ The tunable constants and their defaults:
 | `LMR_MIN_DEPTH` | 2 | Minimum depth eligible for LMR |
 | `LMR_NON_PV_EXTRA` | 1 | Extra reduction at non-PV nodes |
 
+### Quiet-move ordering bonuses (src/search/move_helpers.rs)
+
+| Parameter | Default | Meaning |
+| --- | ---: | --- |
+| `KING_SHIELD_PENALTY` | 4000 | Penalty for moving a pawn shielding the king on its home rank |
+| `OUTPOST_BONUS` | 3000 | Bonus for a knight/bishop landing on an enemy-half outpost |
+| `PASSED_PUSH_BONUS` | 3000 | Bonus for pushing a passed pawn toward the 6th–7th rank |
+| `ATTACK_ORDER_BONUS` | 4000 | Bonus for attacking an enemy piece from a safe square |
+
 ### Correction gravity (src/search/state.rs)
 
 Available under the non-default `correction-gravity` cargo feature. The constants are

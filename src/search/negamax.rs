@@ -1025,6 +1025,10 @@ macro_rules! negamax_mode_body {
                     }
                     let (fk, tk) = from_to_key(move_sr(mv), move_sc(mv), move_er(mv), move_ec(mv));
                     s += $this.history[fk][tk].clamp(-32768, 32768);
+                    s += king_shield_penalty($st, mv);
+                    s += outpost_bonus($st, mv, 0);
+                    s += passed_push_bonus($st, mv);
+                    s += attack_order_bonus($st, mv);
                 }
             }
             scored.push((s, mv));

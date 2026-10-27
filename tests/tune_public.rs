@@ -96,6 +96,10 @@ fn every_parameter_round_trips_through_names_values_and_listing() {
         CorrWeightDen,
         LmrCaptureDivisorMillis,
         HistoryBonusMult,
+        KingShieldPenalty,
+        OutpostBonus,
+        PassedPushBonus,
+        AttackOrderBonus,
     ];
     assert_eq!(TuneParam::COUNT, params.len());
     reset();
