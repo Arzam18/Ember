@@ -4,6 +4,7 @@ use crate::board::{
     BB, BK, BN, BP, BQ, BR, EMPTY_SQ, MATE, WB, WK, WN, WP, WQ, WR,
 };
 use crate::movegen::is_chess960_castling_move_mode;
+use crate::tune::{self, TuneParam};
 
 pub(super) fn piece_val(pt: u8) -> i32 {
     match pt {
@@ -225,11 +226,6 @@ pub(super) fn special_move_gives_check(st: &BoardState, mv: Move) -> bool {
     }
 }
 
-const KING_SHIELD_PENALTY: i32 = 4_000;
-const OUTPOST_BONUS: i32 = 3_000;
-const PASSED_PUSH_BONUS: i32 = 3_000;
-const ATTACK_ORDER_BONUS: i32 = 4_000;
-
 #[inline(always)]
 fn pawn_protects(bb: &[u64; 12], sq: usize, is_white: bool) -> bool {
     let r = sq >> 3;
@@ -306,7 +302,7 @@ pub(super) fn king_shield_penalty(st: &BoardState, mv: Move) -> i32 {
         return 0;
     }
 
-    -KING_SHIELD_PENALTY
+    -(tune::get_int(TuneParam::KingShieldPenalty, 4000) as i32)
 }
 
 #[inline(always)]
@@ -341,7 +337,7 @@ pub(super) fn outpost_bonus(st: &BoardState, mv: Move, safe_level: u8) -> i32 {
         return 0;
     }
 
-    let bonus = OUTPOST_BONUS;
+    let bonus = tune::get_int(TuneParam::OutpostBonus, 3000) as i32;
     if safe_level >= 1 {
         let enemy_bishops = if is_white { st.bb[BB] } else { st.bb[WB] };
         if enemy_bishops != 0 {
@@ -422,7 +418,7 @@ pub(super) fn passed_push_bonus(st: &BoardState, mv: Move) -> i32 {
         return 0;
     }
 
-    PASSED_PUSH_BONUS
+    tune::get_int(TuneParam::PassedPushBonus, 3000) as i32
 }
 
 #[inline(always)]
@@ -456,11 +452,11 @@ pub(super) fn attack_order_bonus(st: &BoardState, mv: Move) -> i32 {
     let mover_val = piece_val(mover_pt);
     let victim_val = piece_val(victim_pt);
     if victim_val > mover_val {
-        return ATTACK_ORDER_BONUS;
+        return tune::get_int(TuneParam::AttackOrderBonus, 4000) as i32;
     }
 
     if !square_defended_by(&st.bb, to, mover_is_white, from) {
-        return ATTACK_ORDER_BONUS;
+        return tune::get_int(TuneParam::AttackOrderBonus, 4000) as i32;
     }
 
     0
@@ -602,7 +598,10 @@ mod tests {
         place(&mut st, WP, 53); // white pawn on f2 (shield)
         place(&mut st, BN, 44); // black knight on f3 (opponent non-pawn material)
         let mv = crate::board::encode_move(6, 5, 6, 6, 0); // f2-f3
-        assert_eq!(king_shield_penalty(&st, mv), -KING_SHIELD_PENALTY);
+        assert_eq!(
+            king_shield_penalty(&st, mv),
+            -(tune::get_int(TuneParam::KingShieldPenalty, 4000) as i32)
+        );
     }
 
     #[test]
@@ -631,7 +630,10 @@ mod tests {
         place(&mut st, WN, 45); // white knight on f3
         place(&mut st, WP, 35); // white pawn on d4 (protects e5)
         let mv = crate::board::encode_move(5, 5, 3, 4, 0); // f3-e5
-        assert_eq!(outpost_bonus(&st, mv, 0), OUTPOST_BONUS);
+        assert_eq!(
+            outpost_bonus(&st, mv, 0),
+            tune::get_int(TuneParam::OutpostBonus, 3000) as i32
+        );
     }
 
     #[test]
@@ -660,7 +662,10 @@ mod tests {
         place(&mut st, BK, 4); // black king on a8
                                // Very little non-pawn material: only kings
         let mv = crate::board::encode_move(2, 4, 1, 4, 0); // e6-e7
-        assert_eq!(passed_push_bonus(&st, mv), PASSED_PUSH_BONUS);
+        assert_eq!(
+            passed_push_bonus(&st, mv),
+            tune::get_int(TuneParam::PassedPushBonus, 3000) as i32
+        );
     }
 
     #[test]
@@ -689,7 +694,10 @@ mod tests {
         place(&mut st, BB, 28); // black bishop on e5
                                 // Knight attacks e5; f3 not attacked by black; bishop heavier than knight
         let mv = crate::board::encode_move(5, 5, 3, 4, 0); // f3xe5
-        assert_eq!(attack_order_bonus(&st, mv), ATTACK_ORDER_BONUS);
+        assert_eq!(
+            attack_order_bonus(&st, mv),
+            tune::get_int(TuneParam::AttackOrderBonus, 4000) as i32
+        );
     }
 
     #[test]
@@ -699,7 +707,10 @@ mod tests {
         place(&mut st, BN, 37); // black knight on f4 (square 37 = r=4,c=5)
                                 // Bishop attacks f4; c1 not attacked by black; f4 undefended by white
         let mv = crate::board::encode_move(7, 2, 4, 5, 0); // c1xf4
-        assert_eq!(attack_order_bonus(&st, mv), ATTACK_ORDER_BONUS);
+        assert_eq!(
+            attack_order_bonus(&st, mv),
+            tune::get_int(TuneParam::AttackOrderBonus, 4000) as i32
+        );
     }
 
     #[test]
