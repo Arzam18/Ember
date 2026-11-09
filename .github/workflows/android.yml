@@ -1,0 +1,47 @@
+name: Build Ember for Android (ARM64)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-android-arm64:
+    name: Build Android ARM64 Binary
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: aarch64-linux-android
+
+      # Forces rustup to install the target into the toolchain pinned in rust-toolchain.toml
+      - name: Ensure Target for Active Toolchain
+        run: rustup target add aarch64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build Android ARM64 Executable
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+        run: |
+          cargo ndk -t arm64-v8a build --release --bin ember
+
+      - name: Stage Artifact
+        run: |
+          mkdir -p dist
+          cp target/aarch64-linux-android/release/ember dist/ember-android-arm64
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ember-android-arm64
+          path: dist/ember-android-arm64
