@@ -33,10 +33,14 @@ let
     # xwin expects the manifest toolset selector, not the 14.44.35220
     # build number reported by the installed CRT headers.
     crtVersion = "14.44.17.14";
+    # Recursive sha256 of the cargo-xwin cache for this exact SDK/CRT pin.
+    # Obtain a new hash with the lib.fakeSha256 placeholder ("got: …" in the
+    # Nix error) whenever sdkVersion, crtVersion, or the nixpkgs cargo-xwin
+    # version changes.
     cacheHash =
       {
-        amd64 = "sha256-wHNCHGHGJcKv+oN/sDceNBitjQdwRcEWOZlJnu/CzSE=";
-        arm64 = "sha256-ejLSpOVpszYXdfovAfhVRyyn/cVgXNwCiKQao+smags=";
+        amd64 = "sha256-fpXJ9vAsge1IoDe2DziFyIY1uarqLLYc5MUkPT1hBe8=";
+        arm64 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
       }
       .${arch};
   };
@@ -84,8 +88,7 @@ let
 
     outputHashAlgo = "sha256";
     outputHashMode = "recursive";
-    # Placeholder — the real hash is printed by Nix on mismatch ("got: …").
-    outputHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    outputHash = xwinConfig.cacheHash;
     buildPhase = ''
       runHook preBuild
       export HOME="$TMPDIR/home"
