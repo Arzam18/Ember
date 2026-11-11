@@ -40,7 +40,7 @@ let
     cacheHash =
       {
         amd64 = "sha256-fpXJ9vAsge1IoDe2DziFyIY1uarqLLYc5MUkPT1hBe8=";
-        arm64 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        arm64 = "sha256-chtxOD8utE1uNGRtDbtDwzMgptpq3Tgatg4B7JJTdFk=";
       }
       .${arch};
   };
