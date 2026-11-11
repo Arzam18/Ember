@@ -82,12 +82,10 @@ let
       pkgs.cargo-xwin
     ];
 
-    # NOTE: outputHash is intentionally omitted. The SDK cache contents depend
-    # on Microsoft's CDN and the cargo-xwin/xwin version in nixpkgs, so the
-    # correct recursive sha256 can only be obtained after the first successful
-    # `nix build` (Nix prints "got: <hash>" on hash mismatch). Add it back as
-    # `outputHash = "sha256-..."` here and in xwinConfig.cacheHash once known,
-    # to restore fixed-output reproducibility.
+    outputHashAlgo = "sha256";
+    outputHashMode = "recursive";
+    # Placeholder — the real hash is printed by Nix on mismatch ("got: …").
+    outputHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     buildPhase = ''
       runHook preBuild
       export HOME="$TMPDIR/home"
